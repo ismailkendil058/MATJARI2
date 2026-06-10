@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import {
-  Plus, RotateCcw, Search, Eye, ArrowLeft, Package, PackagePlus, X
+  Plus, RotateCcw, Search, Eye, ArrowLeft, Package, PackagePlus, X, Trash2
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -1375,6 +1375,16 @@ export default function FacturesPage() {
                   >
                     Modifier
                   </Button>
+                  {user?.role === "admin" && (
+                    <Button
+                      variant="ghost"
+                      className="rounded-xl font-bold px-4 text-red-500 hover:bg-red-50 gap-2"
+                      onClick={() => handleDeleteInvoice(selectedInvoice)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Supprimer
+                    </Button>
+                  )}
                   <Button variant="ghost" className="rounded-xl font-bold px-4 text-gray-400 hover:bg-gray-100" onClick={() => setSelectedInvoice(null)}>Fermer</Button>
                 </div>
               </div>

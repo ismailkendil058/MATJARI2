@@ -1,9 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import {
-  Search, Plus, Minus, Trash2, Package, Shirt, Sparkles, Watch, Dumbbell, Footprints, Layers, Printer,
-  ShoppingBag, Gem, Palette, Crown, Heart, Star, Flower2, Sun, Moon, Zap, Coffee, Gift,
-  Glasses, Scissors, Umbrella, Music, Camera, Headphones,
-  type LucideIcon
+  Search, Plus, Minus, Trash2, Package, Printer
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -18,14 +15,10 @@ import { Product, CartItem, CategoryType, CustomSaleCard, Client, Sale, Expense,
 import { formatDZD, generateId } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/AuthContext";
+import { CATEGORY_ICON_MAP } from "@/lib/icons";
 
 // Icon registry for resolving icon names to components
-const LUCIDE_ICON_MAP: Record<string, LucideIcon> = {
-  Shirt, Layers, Footprints, Watch, Sparkles, Dumbbell,
-  Package, ShoppingBag, Gem, Palette, Crown, Heart,
-  Star, Flower2, Sun, Moon, Zap, Coffee, Gift,
-  Glasses, Scissors, Umbrella, Music, Camera, Headphones,
-};
+const LUCIDE_ICON_MAP = CATEGORY_ICON_MAP;
 
 const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
 const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45", "46", "47"];
@@ -488,7 +481,7 @@ export default function CaissePage() {
       priceSale: price,
       priceBuy: 0,
       stock: 1,
-      unit: "unité",
+      unit: "unité" as "unité" | "kg",
     };
 
     const newItem = {
@@ -1019,7 +1012,7 @@ export default function CaissePage() {
           )}
         </div>
 
-        
+
       </div>
 
       {/* Right panel — Cart */}
@@ -1054,10 +1047,10 @@ export default function CaissePage() {
                 <div key={`${item.product.id}-${idx}`} className="flex items-center gap-4 bg-white rounded-xl p-4 shadow-sm border border-border mb-3 group transition-all hover:border-accent">
                   <div className="flex-1 min-w-0">
                     <p className="text-base font-bold text-foreground truncate">
-                        {item.product.name}
-                        {item.product.id && String(item.product.id).startsWith('addpay-') && (
-                          <span className="ml-2 px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-md text-[11px] font-black">Bénéfice</span>
-                        )}
+                      {item.product.name}
+                      {item.product.id && String(item.product.id).startsWith('addpay-') && (
+                        <span className="ml-2 px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-md text-[11px] font-black">Bénéfice</span>
+                      )}
                       {item.size && <span className="ml-2 px-2 py-0.5 bg-primary/10 text-primary rounded-md text-[11px] font-black">{item.size}</span>}
                     </p>
                     {item.customUnitPrice ? (
@@ -1304,7 +1297,7 @@ export default function CaissePage() {
           <div className="space-y-3 pt-2">
             <Input placeholder="Titre (ex: Service, Frais)" className="h-11 border-border" value={addPaymentTitle} onChange={e => setAddPaymentTitle(e.target.value)} />
             <Input type="number" placeholder="Montant en DZD" className="h-11 border-border" value={addPaymentPrice} onChange={e => setAddPaymentPrice(e.target.value)} />
-            
+
             <Button onClick={confirmAddAdditionalPayment} className="w-full h-11 mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black">Ajouter au panier</Button>
           </div>
         </DialogContent>
