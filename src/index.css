@@ -1,0 +1,113 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 174 40% 95%;
+    /* Light mint/cyan gray background */
+    --foreground: 211 28% 25%;
+    /* Dark slate text */
+
+    --card: 0 0% 100%;
+    /* White */
+    --card-foreground: 211 28% 25%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 211 28% 25%;
+
+    --primary: 144 46% 47%;
+    /* Green Pay Button */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 96%;
+    /* Lighter gray/slate */
+    --secondary-foreground: 211 28% 25%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 174 59% 71%;
+    /* Light mint */
+    --accent-foreground: 211 28% 25%;
+
+    --destructive: 358 68% 65%;
+    /* Soft red/coral */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 144 46% 47%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 211 28% 25%;
+    /* Dark Slate Top Bar */
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 144 46% 47%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 211 28% 35%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 211 28% 20%;
+    --sidebar-ring: 144 46% 47%;
+    --sidebar-muted: 211 28% 45%;
+
+    --success: 144 46% 47%;
+    --success-foreground: 0 0% 100%;
+
+    --font-serif: 'Poppins', system-ui, sans-serif;
+    --font-sans: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    /* Dynamically scales the base font size based on screen width. 
+       At 1920px, it's 16px. It smoothly scales down as the window gets smaller.
+       Since Tailwind uses rems for everything (padding, text size, margins, widths),
+       this single line scales the ENTIRE application UI perfectly without breaking layouts! */
+    font-size: clamp(10px, 0.833vw, 16px);
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer utilities {
+  .font-serif {
+    font-family: var(--font-serif);
+  }
+
+  .font-sans {
+    font-family: var(--font-sans);
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
