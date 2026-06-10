@@ -57,26 +57,32 @@ export default function AnalytiquePage() {
 
   const totalRevenue = monthlySales.reduce((s, sale) => {
     if (sale.type === 'return') return s - Math.abs(sale.total);
-    if (sale.type === 'credit' && (sale.creditAmount || 0) > 0) return s;
+    // Include all sales (direct and credit) in total revenue
     return s + sale.total;
   }, 0);
+
   const totalPaymentCredits = monthlyPayments.reduce((s, p) => s + p.amount, 0);
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+
   const directCash = monthlySales.reduce((s, sale) => {
     if (sale.type === 'return') return s - Math.abs(sale.paidAmount || 0);
     return s + (sale.paidAmount || 0);
   }, 0);
+
+  // Vente Encaissée: Total cash received (from direct sales and credit payments) minus expenses
   const venteEncaisser = directCash + totalPaymentCredits - totalExpenses;
-  const venteCredit = totalRevenue - (directCash + totalPaymentCredits);
+
   const totalCost = monthlySales.reduce((s, sale) => {
     const saleCost = sale.items.reduce((is, item) => is + getItemPurchaseCost(item), 0);
     if (sale.type === 'return') return s - Math.abs(saleCost);
-    if (sale.type === 'credit' && (sale.creditAmount || 0) > 0) return s;
+    // Include costs for credit sales as well
     return s + saleCost;
   }, 0);
+
   const totalReduction = monthlySales.reduce((s, sale) => {
     return sale.type === 'return' ? s - Math.abs(sale.reduction || 0) : s + (sale.reduction || 0);
   }, 0);
+
   const profit = totalRevenue - totalCost - totalExpenses;
   const totalCaisse = venteEncaisser;
 
@@ -233,7 +239,7 @@ export default function AnalytiquePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center animate-scale-in">
           <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Ventes Totales</p>
           <p className="text-3xl font-black text-[#3f5362] tracking-tighter">{formatDZD(totalRevenue)}</p>
@@ -241,10 +247,6 @@ export default function AnalytiquePage() {
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center animate-scale-in" style={{ animationDelay: '100ms' }}>
           <p className="text-xs font-black text-[#41b86d] uppercase tracking-widest mb-3">Vente Encaissée</p>
           <p className="text-3xl font-black text-[#41b86d] tracking-tighter">{formatDZD(venteEncaisser)}</p>
-        </div>
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center animate-scale-in" style={{ animationDelay: '200ms' }}>
-          <p className="text-xs font-black text-red-500 uppercase tracking-widest mb-3">Vente Crédit</p>
-          <p className="text-3xl font-black text-red-500 tracking-tighter">{formatDZD(venteCredit)}</p>
         </div>
         <div className={`rounded-3xl p-8 shadow-sm border flex flex-col justify-center animate-scale-in bg-white`} style={{ animationDelay: '300ms', borderColor: '#e6f4ea' }}>
           <p className={`text-xs font-black uppercase tracking-widest mb-3 ${profit >= 0 ? 'text-[#16a34a]' : 'text-red-500'}`}>Bénéfices</p>
