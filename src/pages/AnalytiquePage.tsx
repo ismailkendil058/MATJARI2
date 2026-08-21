@@ -1,22 +1,28 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
-import { getSales, getPayments, getClients, getExpenses } from "@/lib/db";
-import { Sale, Payment, Client, Expense } from "@/lib/types";
+import { getSales, getPayments, getClients, getExpenses, getCategories } from "@/lib/db";
+import { Sale, Payment, Client, Expense, Category } from "@/lib/types";
 import { formatDZD } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CATEGORY_ICON_MAP } from "@/lib/icons";
+import { Package } from "lucide-react";
 
 export default function AnalytiquePage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [day, setDay] = useState<string>("");
+  const [categories, setCategories] = useState<Category[]>([]);
+  const todayObj = new Date();
+  const [month, setMonth] = useState(todayObj.toISOString().slice(0, 7));
+  const [day, setDay] = useState<string>(String(todayObj.getDate()).padStart(2, "0"));
   const [mobileView, setMobileView] = useState<"kpis" | "history">("kpis");
   const [showExpenseReductionDialog, setShowExpenseReductionDialog] = useState(false);
+  const [showCategorySalesDialog, setShowCategorySalesDialog] = useState(false);
 
   useEffect(() => {
     getClients().then(setClients).catch(console.error);
+    getCategories().then(setCategories).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -85,6 +91,64 @@ export default function AnalytiquePage() {
 
   const profit = totalRevenue - totalCost - totalExpenses;
   const totalCaisse = venteEncaisser;
+
+  const categorySalesData = useMemo(() => {
+    const map = new Map<string, {
+      key: string;
+      label: string;
+      labelAr?: string;
+      revenue: number;
+      cost: number;
+      profit: number;
+      quantity: number;
+      color?: string;
+      icon?: string;
+    }>();
+
+    monthlySales.forEach(sale => {
+      const isReturn = sale.type === 'return';
+      const multiplier = isReturn ? -1 : 1;
+
+      sale.items.forEach(item => {
+        const catKey = item.product?.category || "sans_categorie";
+        const subtotal = item.subtotal ?? ((item.customUnitPrice ?? item.product?.priceSale ?? 0) * item.quantity);
+        const itemCost = getItemPurchaseCost(item);
+        const qty = item.quantity;
+
+        const catObj = categories.find(c => c.key === catKey);
+
+        const existing = map.get(catKey) || {
+          key: catKey,
+          label: catObj ? catObj.label : (catKey === "sans_categorie" ? "Sans catégorie" : catKey),
+          labelAr: catObj?.labelAr,
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+          quantity: 0,
+          color: catObj?.color || "#3f5362",
+          icon: catObj?.icon
+        };
+
+        existing.revenue += subtotal * multiplier;
+        existing.cost += itemCost * multiplier;
+        existing.profit += (subtotal - itemCost) * multiplier;
+        existing.quantity += qty * multiplier;
+
+        map.set(catKey, existing);
+      });
+    });
+
+    const totalCatRevenue = Array.from(map.values()).reduce((s, c) => s + (c.revenue > 0 ? c.revenue : 0), 0);
+
+    const list = Array.from(map.values())
+      .map(cat => ({
+        ...cat,
+        percentage: totalCatRevenue > 0 && cat.revenue > 0 ? (cat.revenue / totalCatRevenue) * 100 : 0
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    return { list, totalCatRevenue };
+  }, [monthlySales, categories]);
 
   const [expandedDates, setExpandedDates] = useState<string[]>([]);
 
@@ -240,10 +304,27 @@ export default function AnalytiquePage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center animate-scale-in">
-          <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Ventes Totales</p>
-          <p className="text-3xl font-black text-[#3f5362] tracking-tighter">{formatDZD(totalRevenue)}</p>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowCategorySalesDialog(true)}
+          className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center animate-scale-in text-left text-current transition hover:-translate-y-1 hover:shadow-lg cursor-pointer group"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                Ventes Totales
+              </p>
+              <p className="text-3xl font-black text-[#3f5362] tracking-tighter">{formatDZD(totalRevenue)}</p>
+            </div>
+            <span className="text-xs font-black uppercase tracking-widest text-[#3f5362] bg-gray-100 group-hover:bg-[#3f5362] group-hover:text-white px-3 py-1.5 rounded-full transition-colors">
+              Par catégorie
+            </span>
+          </div>
+          <div className="flex items-center gap-1 mt-3 text-xs font-bold text-gray-400 group-hover:text-[#3f5362] transition-colors">
+            <span>Voir détails par catégorie</span>
+            <span>→</span>
+          </div>
+        </button>
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center animate-scale-in" style={{ animationDelay: '100ms' }}>
           <p className="text-xs font-black text-[#41b86d] uppercase tracking-widest mb-3">Vente Encaissée</p>
           <p className="text-3xl font-black text-[#41b86d] tracking-tighter">{formatDZD(venteEncaisser)}</p>
@@ -320,6 +401,92 @@ export default function AnalytiquePage() {
                 Fermer
               </button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showCategorySalesDialog} onOpenChange={setShowCategorySalesDialog}>
+        <DialogContent className="max-w-3xl bg-white border-0 shadow-2xl rounded-[2rem] p-0 overflow-hidden">
+          <DialogHeader className="p-8 bg-[#f8fafc] border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-3xl font-black text-[#3f5362]">
+                  Ventes Totales par Catégorie
+                </DialogTitle>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">
+                  Période : {day ? new Date(`${month}-${day}`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : month}
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-black text-[#3f5362] block">{formatDZD(totalRevenue)}</span>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                  {categorySalesData.list.length} catégorie(s)
+                </span>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="p-8 space-y-4 max-h-[65vh] overflow-y-auto">
+            {categorySalesData.list.length === 0 ? (
+              <div className="py-12 text-center">
+                <p className="text-gray-400 font-black text-xl uppercase tracking-widest">Aucune vente enregistrée</p>
+              </div>
+            ) : (
+              categorySalesData.list.map(cat => {
+                const IconComponent = cat.icon && CATEGORY_ICON_MAP[cat.icon] ? CATEGORY_ICON_MAP[cat.icon] : Package;
+                const colorHex = cat.color || "#3f5362";
+
+                return (
+                  <div key={cat.key} className="bg-gray-50/70 border border-gray-100 rounded-2xl p-5 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-sm font-bold"
+                          style={{ backgroundColor: colorHex }}
+                        >
+                          <IconComponent className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-black text-lg text-[#3f5362]">{cat.label}</h4>
+                            {cat.labelAr && <span className="text-xs text-gray-400 font-medium">({cat.labelAr})</span>}
+                          </div>
+                          <p className="text-xs text-gray-400 font-bold">
+                            {cat.quantity} unit{cat.quantity > 1 ? 'és' : 'é'} vendue{cat.quantity > 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-xl font-black text-[#3f5362] block">
+                          {formatDZD(cat.revenue)}
+                        </span>
+                        <div className="flex items-center justify-end gap-2 text-xs font-bold mt-0.5">
+                          <span className="text-emerald-600 font-black">
+                            Bénéfice: {formatDZD(cat.profit)}
+                          </span>
+                          {cat.revenue > 0 && (
+                            <span className="text-gray-400">
+                              ({((cat.profit / cat.revenue) * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowCategorySalesDialog(false)}
+              className="h-12 px-8 rounded-2xl bg-[#3f5362] text-white font-black hover:bg-[#2d3d49] transition-colors shadow-sm"
+            >
+              Fermer
+            </button>
           </div>
         </DialogContent>
       </Dialog>

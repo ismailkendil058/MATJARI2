@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import {
-  Plus, RotateCcw, Search, Eye, ArrowLeft, Package, PackagePlus, X, Trash2
+  Plus, RotateCcw, Search, Eye, ArrowLeft, Package, PackagePlus, X, Trash2, Barcode, Printer, Check
 } from "lucide-react";
+import JsBarcode from "jsbarcode";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,6 +28,63 @@ const categoryColorsFallback: Record<string, string> = {
   vestes: "bg-cyan-50 text-cyan-600 border-cyan-100",
 };
 
+
+// Generates a 13-digit numeric barcode (EAN-13 style) from a product name
+const generateBarcodeValue = (name: string): string => {
+  // Hash the name characters into a seed number
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  // Combine hash with current timestamp to ensure uniqueness
+  const ts = Date.now().toString().slice(-6);
+  const hashPart = hash.toString().padStart(7, "0").slice(-7);
+  return `${hashPart}${ts}`; // 13 digits total
+};
+
+function BarcodeSvg({ value, width = 1.6, height = 45 }: { value: string; width?: number; height?: number }) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  useEffect(() => {
+    if (svgRef.current && value) {
+      try {
+        const barcodeFn = typeof JsBarcode === "function" ? JsBarcode : (JsBarcode as any)?.default;
+        if (barcodeFn) {
+          barcodeFn(svgRef.current, value, {
+            format: "CODE128",
+            width,
+            height,
+            displayValue: false,
+            margin: 2,
+          });
+        }
+      } catch (e) {
+        console.error("Barcode rendering error:", e);
+      }
+    }
+  }, [value, width, height]);
+  return <svg ref={svgRef}></svg>;
+}
+
+const generateBarcodeSvgMarkup = (value: string, width = 1.4, height = 35): string => {
+  if (!value) return "";
+  try {
+    const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const barcodeFn = typeof JsBarcode === "function" ? JsBarcode : (JsBarcode as any)?.default;
+    if (barcodeFn) {
+      barcodeFn(svgEl, value, {
+        format: "CODE128",
+        width,
+        height,
+        displayValue: false,
+        margin: 1,
+      });
+      return svgEl.outerHTML;
+    }
+  } catch (e) {
+    console.error("Barcode SVG generation error:", e);
+  }
+  return `<div style="font-size:10px;color:red;">${value}</div>`;
+};
 
 type View = "list" | "add" | "return";
 type InvoiceFormItem = {
@@ -107,6 +165,17 @@ export default function FacturesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [activeCategory, setActiveCategory] = useState<CategoryType | null>("hauts");
   const [mobileSection, setMobileSection] = useState<"products" | "cart">("products");
+
+  // Barcode Preview Modal State
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [modalBarcodeItems, setModalBarcodeItems] = useState<{
+    id: string;
+    name: string;
+    barcode: string;
+    priceSale: number;
+    copies: number;
+  }[]>([]);
+  const [printMode, setPrintMode] = useState<"xprinter" | "a4">("xprinter");
 
   // Add form state
   const [supplierId, setSupplierId] = useState("");
@@ -567,7 +636,295 @@ export default function FacturesPage() {
     }, 0);
   }, [returnItems, selectedReturnInvoice]);
 
-  // â”€â”€â”€ ADD FACTURE VIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── OPEN BARCODE PREVIEW MODAL ──────────────────────────────────────────
+  const handleOpenBarcodeModal = () => {
+    if (invoiceItems.length === 0) {
+      toast.error("Veuillez d'abord ajouter des produits à la facture");
+      return;
+    }
+
+    const items = invoiceItems.map((item, idx) => {
+      const prod = products.find(p => p.id === item.productId);
+      const name = item.isNew ? item.newName : (prod?.name || "Produit");
+      let barcode = item.barcode || prod?.barcode || "";
+
+      // Auto-generate barcode if missing
+      if (!barcode && name) {
+        barcode = generateBarcodeValue(name);
+      }
+
+      return {
+        id: `${item.productId}-${idx}`,
+        name,
+        barcode,
+        priceSale: item.priceSale || prod?.priceSale || 0,
+        copies: item.quantity > 0 ? item.quantity : 1,
+      };
+    }).filter(item => item.name);
+
+    if (items.length === 0) {
+      toast.error("Aucun produit dans la facture");
+      return;
+    }
+
+    setModalBarcodeItems(items);
+    setShowBarcodeModal(true);
+  };
+
+  // ─── EXECUTE PRINT FROM MODAL ─────────────────────────────────────────────
+  const handleExecutePrintBarcodes = () => {
+    const printList: { name: string; barcode: string; priceSale: number }[] = [];
+    modalBarcodeItems.forEach(item => {
+      for (let i = 0; i < item.copies; i++) {
+        printList.push({ name: item.name, barcode: item.barcode, priceSale: item.priceSale });
+      }
+    });
+
+    if (printList.length === 0) {
+      toast.error("Aucune étiquette sélectionnée pour l'impression");
+      return;
+    }
+
+    const isThermal = printMode === "xprinter";
+
+    const labelsHtml = printList.map(item => {
+      const svgMarkup = generateBarcodeSvgMarkup(item.barcode, isThermal ? 1.3 : 1.4, isThermal ? 32 : 38);
+      const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
+      if (isThermal) {
+        return `
+          <div class="thermal-label">
+            <div class="brand">MATJARI</div>
+            <div class="name">${item.name}</div>
+            ${priceText ? `<div class="price">${priceText}</div>` : ""}
+            <div class="svg-container">${svgMarkup}</div>
+            <div class="code">${item.barcode}</div>
+          </div>
+        `;
+      } else {
+        return `
+          <div class="a4-card">
+            <div class="name">${item.name}</div>
+            ${priceText ? `<div class="price">${priceText}</div>` : ""}
+            <div class="svg-container">${svgMarkup}</div>
+            <div class="code">${item.barcode}</div>
+          </div>
+        `;
+      }
+    }).join("");
+
+    const styles = isThermal
+      ? `
+        @page {
+          size: 50mm 30mm;
+          margin: 0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+          width: 50mm;
+          height: 30mm;
+          margin: 0;
+          padding: 0;
+          background: #fff;
+          font-family: system-ui, -apple-system, sans-serif;
+        }
+        .thermal-label {
+          width: 50mm;
+          height: 30mm;
+          box-sizing: border-box;
+          padding: 1.5mm 2mm;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          page-break-after: always;
+          break-after: page;
+          page-break-inside: avoid;
+          break-inside: avoid;
+          overflow: hidden;
+        }
+        .brand {
+          font-size: 7px;
+          font-weight: 900;
+          letter-spacing: 1px;
+          color: #64748b;
+          text-transform: uppercase;
+          line-height: 1;
+          margin-bottom: 1px;
+        }
+        .name {
+          font-size: 9px;
+          font-weight: 800;
+          text-transform: uppercase;
+          color: #0f172a;
+          max-width: 46mm;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          line-height: 1.1;
+        }
+        .price {
+          font-size: 10px;
+          font-weight: 900;
+          color: #000;
+          line-height: 1.1;
+          margin-top: 1px;
+        }
+        .svg-container {
+          margin-top: 1px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          max-width: 46mm;
+        }
+        .svg-container svg {
+          max-width: 46mm;
+          height: auto;
+          display: block;
+        }
+        .code {
+          font-size: 8px;
+          font-weight: 700;
+          color: #334155;
+          letter-spacing: 0.5px;
+          margin-top: 1px;
+          line-height: 1;
+        }
+      `
+      : `
+        @page {
+          size: A4;
+          margin: 8mm;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          font-family: system-ui, -apple-system, sans-serif;
+          background: #fff;
+          padding: 5mm;
+        }
+        .grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 3mm;
+        }
+        .a4-card {
+          width: 48mm;
+          height: 30mm;
+          background: #fff;
+          border: 1px dashed #cbd5e1;
+          border-radius: 6px;
+          padding: 2mm;
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        .name {
+          font-size: 9.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          color: #0f172a;
+          max-width: 44mm;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .price {
+          font-size: 10px;
+          font-weight: 900;
+          color: #0284c7;
+          margin-top: 1px;
+        }
+        .svg-container {
+          margin-top: 1px;
+          display: flex;
+          justify-content: center;
+        }
+        .svg-container svg {
+          max-width: 44mm;
+          height: auto;
+          display: block;
+        }
+        .code {
+          font-size: 8px;
+          font-weight: 700;
+          color: #475569;
+          letter-spacing: 0.5px;
+          margin-top: 1px;
+        }
+        @media print {
+          body { padding: 0; }
+          .a4-card { border: 1px solid #000; }
+        }
+      `;
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Impression Code-barres - Matjari</title>
+        <style>${styles}</style>
+      </head>
+      <body>
+        ${isThermal ? labelsHtml : `<div class="grid">${labelsHtml}</div>`}
+      </body>
+      </html>
+    `;
+
+    try {
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.style.visibility = "hidden";
+      document.body.appendChild(iframe);
+
+      const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
+      if (iframeDoc) {
+        iframeDoc.open();
+        iframeDoc.write(html);
+        iframeDoc.close();
+
+        setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          } catch (e) {
+            console.error("Iframe print error, trying popup window:", e);
+            const win = window.open("", "_blank");
+            if (win) {
+              win.document.write(html);
+              win.document.close();
+              setTimeout(() => { win.print(); }, 300);
+            }
+          } finally {
+            setTimeout(() => {
+              if (document.body.contains(iframe)) {
+                document.body.removeChild(iframe);
+              }
+            }, 2000);
+          }
+        }, 300);
+      }
+    } catch (err) {
+      console.error("Print execution failed:", err);
+      const win = window.open("", "_blank");
+      if (win) {
+        win.document.write(html);
+        win.document.close();
+        setTimeout(() => { win.print(); }, 300);
+      }
+    }
+  };
+
+  // ─── ADD FACTURE VIEW ──────────────────────────────────────────────────────
   if (view === "add") {
     return (
       <div className="fixed inset-0 z-40 flex flex-col bg-white text-slate-800 font-sans overflow-hidden animate-fade-in">
@@ -654,12 +1011,26 @@ export default function FacturesPage() {
                     onFocus={() => setShowSuggestions(true)}
                     className="h-16 border-slate-200 rounded-2xl font-black text-xl focus-visible:ring-slate-100 flex-1 px-6 shadow-none"
                   />
-                  <Input
-                    placeholder="Code-barre (opt.)"
-                    value={itemBarcode}
-                    onChange={e => setItemBarcode(e.target.value)}
-                    className="h-16 w-52 border-slate-200 rounded-2xl text-lg font-bold px-6 shadow-none"
-                  />
+                  <div className="relative w-52">
+                    <Input
+                      placeholder="Code-barre (opt.)"
+                      value={itemBarcode}
+                      onChange={e => setItemBarcode(e.target.value)}
+                      className="h-16 border-slate-200 rounded-2xl text-base font-bold pl-5 pr-12 shadow-none w-full"
+                    />
+                    <button
+                      type="button"
+                      title="Générer un code-barre à partir du nom"
+                      onClick={() => {
+                        const name = itemName.trim();
+                        if (!name) return;
+                        setItemBarcode(generateBarcodeValue(name));
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-primary hover:text-white text-slate-500 transition-all active:scale-90 shadow-sm"
+                    >
+                      <Barcode className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
                 {showSuggestions && nameSuggestions.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-3 bg-white border border-slate-100 rounded-3xl shadow-2xl z-50 overflow-hidden border-2">
@@ -882,7 +1253,18 @@ export default function FacturesPage() {
 
           <div className="flex items-center gap-8">
             {invoiceItems.length > 0 && (
-              <button onClick={() => { if (confirm("Effacer toute la facture ?")) setInvoiceItems([]); }} className="text-xs font-black uppercase text-slate-400 hover:text-red-500 tracking-[0.2em] transition-colors">Réinitialiser</button>
+              <div className="flex items-center gap-5">
+                <button
+                  onClick={handleOpenBarcodeModal}
+                  title="Imprimer les code-barres"
+                  className="flex items-center gap-2 text-xs font-black uppercase text-slate-400 hover:text-primary tracking-[0.2em] transition-colors group"
+                >
+                  <Printer className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                  Imprimer code-barres
+                </button>
+                <div className="w-px h-5 bg-slate-200" />
+                <button onClick={() => { if (confirm("Effacer toute la facture ?")) setInvoiceItems([]); }} className="text-xs font-black uppercase text-slate-400 hover:text-red-500 tracking-[0.2em] transition-colors">Réinitialiser</button>
+              </div>
             )}
             <Button
               onClick={handleSubmitInvoice}
@@ -894,6 +1276,102 @@ export default function FacturesPage() {
             </Button>
           </div>
         </footer>
+
+        {/* BARCODE PREVIEW & MODEL MODAL inside view === add */}
+        <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
+          <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
+            <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                  <Barcode className="h-7 w-7 text-primary" />
+                  Modèle & Aperçu des Étiquettes Code-barres
+                </DialogTitle>
+                <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
+                  Consultez le rendu visuel des étiquettes et ajustez le nombre d'exemplaires avant impression
+                </p>
+              </div>
+
+              {/* Mode Selection */}
+              <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 self-start md:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setPrintMode("xprinter")}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "xprinter" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  <Printer className="h-4 w-4" />
+                  Xprinter XP-420B (Thermique)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintMode("a4")}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "a4" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
+                >
+                  📄 Planche A4
+                </button>
+              </div>
+            </DialogHeader>
+
+            <div className="p-8 max-h-[60vh] overflow-y-auto space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {modalBarcodeItems.map((item, idx) => (
+                  <div key={item.id} className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1 pr-3">
+                        <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
+                        <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "Prix non fixé"}</p>
+                      </div>
+                      <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
+                        <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={item.copies}
+                          onChange={e => {
+                            const val = Math.max(1, Number(e.target.value) || 1);
+                            setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
+                          }}
+                          className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* STICKER MODEL PREVIEW CARD */}
+                    <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                        {printMode === "xprinter" ? "Modèle étiquette Xprinter (50x30mm)" : "Modèle étiquette A4"}
+                      </span>
+                      <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
+                        <span className="text-xs font-black text-slate-900 uppercase max-w-[170px] truncate mb-1">{item.name}</span>
+                        {item.priceSale > 0 && <span className="text-xs font-extrabold text-primary mb-1">{formatDZD(item.priceSale)}</span>}
+                        <BarcodeSvg value={item.barcode} width={1.5} height={40} />
+                        <span className="text-[10px] font-bold text-slate-500 tracking-widest mt-1">{item.barcode}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-6 bg-white border-t flex items-center justify-between">
+              <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, i) => acc + i.copies, 0)}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <Button variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
+                  Fermer
+                </Button>
+                <Button
+                  onClick={handleExecutePrintBarcodes}
+                  className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
+                >
+                  <Printer className="h-5 w-5" />
+                  Lancer l'impression
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -1390,6 +1868,102 @@ export default function FacturesPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* BARCODE PREVIEW & MODEL MODAL */}
+      <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
+        <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
+          <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                <Barcode className="h-7 w-7 text-primary" />
+                Modèle & Aperçu des Étiquettes Code-barres
+              </DialogTitle>
+              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
+                Consultez le rendu visuel des étiquettes et ajustez le nombre d'exemplaires avant impression
+              </p>
+            </div>
+
+            {/* Mode Selection */}
+            <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 self-start md:self-auto">
+              <button
+                type="button"
+                onClick={() => setPrintMode("xprinter")}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "xprinter" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
+              >
+                <Printer className="h-4 w-4" />
+                Xprinter XP-420B (Thermique)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintMode("a4")}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "a4" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
+              >
+                📄 Planche A4
+              </button>
+            </div>
+          </DialogHeader>
+
+          <div className="p-8 max-h-[60vh] overflow-y-auto space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {modalBarcodeItems.map((item, idx) => (
+                <div key={item.id} className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 pr-3">
+                      <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
+                      <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "Prix non fixé"}</p>
+                    </div>
+                    <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
+                      <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={item.copies}
+                        onChange={e => {
+                          const val = Math.max(1, Number(e.target.value) || 1);
+                          setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
+                        }}
+                        className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* STICKER MODEL PREVIEW CARD */}
+                  <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                      {printMode === "xprinter" ? "Modèle étiquette Xprinter (50x30mm)" : "Modèle étiquette A4"}
+                    </span>
+                    <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
+                      <span className="text-xs font-black text-slate-900 uppercase max-w-[170px] truncate mb-1">{item.name}</span>
+                      {item.priceSale > 0 && <span className="text-xs font-extrabold text-primary mb-1">{formatDZD(item.priceSale)}</span>}
+                      <BarcodeSvg value={item.barcode} width={1.5} height={40} />
+                      <span className="text-[10px] font-bold text-slate-500 tracking-widest mt-1">{item.barcode}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-6 bg-white border-t flex items-center justify-between">
+            <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
+              Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, i) => acc + i.copies, 0)}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
+                Fermer
+              </Button>
+              <Button
+                onClick={handleExecutePrintBarcodes}
+                className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
+              >
+                <Printer className="h-5 w-5" />
+                Lancer l'impression
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
