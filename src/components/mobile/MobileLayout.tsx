@@ -3,23 +3,23 @@ import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/components/AuthContext";
 
-const mobileNavItems = [
+const workerMobileNavItems = [
   { title: "Caisse", url: "/", icon: ShoppingCart },
-  { title: "Bons", url: "/bons", icon: FileText },
+  { title: "Bons", url: "/credits", icon: FileText },
+];
+
+const adminMobileNavItems = [
+  ...workerMobileNavItems,
   { title: "Factures", url: "/factures", icon: Receipt },
   { title: "Stock", url: "/inventaire", icon: Package },
+  { title: "Stats", url: "/analytique", icon: BarChart3 },
 ];
 
 export function MobileLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { user } = useAuth();
 
-  const adminMobileNavItems = [
-    ...mobileNavItems,
-    { title: "Stats", url: "/analytique", icon: BarChart3 },
-  ];
-
-  const currentNavItems = user?.role === "admin" ? adminMobileNavItems : mobileNavItems;
+  const currentNavItems = user?.role === "admin" ? adminMobileNavItems : workerMobileNavItems;
 
   return (
     <div className="min-h-screen bg-[#fdf8f8] text-gray-900">

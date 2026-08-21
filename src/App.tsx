@@ -42,12 +42,12 @@ const AppRoutes = () => (
       </ProtectedRoute>
     } />
     <Route path="/factures" element={
-      <ProtectedRoute>
+      <ProtectedRoute requireAdmin>
         <Layout><FacturesPage /></Layout>
       </ProtectedRoute>
     } />
     <Route path="/inventaire" element={
-      <ProtectedRoute>
+      <ProtectedRoute requireAdmin>
         <Layout><InventairePage /></Layout>
       </ProtectedRoute>
     } />

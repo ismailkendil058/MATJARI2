@@ -4,11 +4,18 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/components/AuthContext";
 import { Button } from "./ui/button";
 
-const navItems = [
+const workerNavItems = [
   { title: "Caisse", url: "/", icon: ShoppingCart },
   { title: "Crédit", url: "/credits", icon: FileText },
+];
+
+const adminNavItems = [
+  ...workerNavItems,
   { title: "Factures", url: "/factures", icon: Receipt },
   { title: "Inventaire", url: "/inventaire", icon: Package },
+  { title: "Catégories", url: "/categories", icon: LayoutGrid },
+  { title: "Analytique", url: "/analytique", icon: BarChart3 },
+  { title: "Travailleurs", url: "/workers", icon: Users },
 ];
 
 export function AppSidebar() {
@@ -21,14 +28,7 @@ export function AppSidebar() {
     navigate("/login");
   };
 
-  const adminNavItems = [
-    ...navItems,
-    { title: "Catégories", url: "/categories", icon: LayoutGrid },
-    { title: "Analytique", url: "/analytique", icon: BarChart3 },
-    { title: "Travailleurs", url: "/workers", icon: Users },
-  ];
-
-  const currentNavItems = user?.role === "admin" ? adminNavItems : navItems;
+  const currentNavItems = user?.role === "admin" ? adminNavItems : workerNavItems;
 
   return (
     <aside className="w-64 h-screen sticky top-0 bg-white flex flex-col border-r border-gray-200 shadow-sm z-20 font-sans overflow-y-auto no-scrollbar">
