@@ -8,8 +8,8 @@ import { CATEGORY_ICON_MAP } from "@/lib/icons";
 import { Package } from "lucide-react";
 
 export default function AnalytiquePage() {
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const [allSales, setAllSales] = useState<Sale[]>([]);
+  const [allPayments, setAllPayments] = useState<Payment[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -30,12 +30,12 @@ export default function AnalytiquePage() {
       try {
         const prefix = day ? `${month}-${day.padStart(2, "0")}` : month;
         const [salesData, paymentsData, expensesData] = await Promise.all([
-          getSales(prefix),
-          getPayments(prefix),
+          getSales(),
+          getPayments(),
           getExpenses(prefix)
         ]);
-        setSales(salesData);
-        setPayments(paymentsData);
+        setAllSales(salesData);
+        setAllPayments(paymentsData);
         setExpenses(expensesData);
       } catch (error) {
         console.error("Error loading analytics data:", error);
@@ -44,7 +44,15 @@ export default function AnalytiquePage() {
     loadData();
   }, [month, day]);
 
-  const monthlySales = sales;
+  const prefix = day ? `${month}-${day.padStart(2, "0")}` : month;
+
+  const monthlySales = useMemo(() => {
+    return allSales.filter(s => s.date.startsWith(prefix));
+  }, [allSales, prefix]);
+
+  const monthlyPayments = useMemo(() => {
+    return allPayments.filter(p => p.date.startsWith(prefix));
+  }, [allPayments, prefix]);
 
   const daysInMonth = useMemo(() => {
     const [year, m] = month.split("-").map(Number);
@@ -54,16 +62,117 @@ export default function AnalytiquePage() {
     );
   }, [month]);
 
-  const getItemPurchaseCost = (item: (typeof sales)[number]["items"][number]) => {
-    const unitCost = item.customUnitCost ?? item.product.priceBuy;
-    return unitCost * item.quantity;
+  const getItemPurchaseCost = (item: CartItem) => {
+    const unitCost = item.customUnitCost ?? item.product?.priceBuy ?? 0;
+    return unitCost * (item.quantity || 0);
   };
 
-  const monthlyPayments = payments;
+  const getSalePurchaseCost = (sale: Sale) => {
+    const cost = sale.items.reduce((s, i) => s + getItemPurchaseCost(i), 0);
+    return sale.type === 'return' ? -Math.abs(cost) : cost;
+  };
+
+  const getSalesProfitMapAtDate = (
+    salesList: Sale[],
+    paymentsList: Payment[],
+    cutoffIsoString?: string
+  ) => {
+    const salesUpToCutoff = cutoffIsoString
+      ? salesList.filter(s => s.date <= cutoffIsoString)
+      : salesList;
+    const paymentsUpToCutoff = cutoffIsoString
+      ? paymentsList.filter(p => p.date <= cutoffIsoString)
+      : paymentsList;
+
+    const clientPaymentsTotal = new Map<string, number>();
+    paymentsUpToCutoff.forEach(p => {
+      if (p.clientId) {
+        clientPaymentsTotal.set(
+          p.clientId,
+          (clientPaymentsTotal.get(p.clientId) || 0) + p.amount
+        );
+      }
+    });
+
+    const clientSales = new Map<string, Sale[]>();
+    salesUpToCutoff.forEach(s => {
+      if (s.clientId && s.type === 'credit') {
+        const list = clientSales.get(s.clientId) || [];
+        list.push(s);
+        clientSales.set(s.clientId, list);
+      }
+    });
+
+    clientSales.forEach(list => {
+      list.sort((a, b) => a.date.localeCompare(b.date));
+    });
+
+    const allocatedCreditPaymentPerSale = new Map<string, number>();
+    clientSales.forEach((sList, clientId) => {
+      let availablePayment = clientPaymentsTotal.get(clientId) || 0;
+      for (const sale of sList) {
+        const saleTotal = sale.total;
+        const initialPaid = sale.paidAmount || 0;
+        const creditOwed = Math.max(0, saleTotal - initialPaid);
+
+        const allocated = Math.min(creditOwed, availablePayment);
+        allocatedCreditPaymentPerSale.set(sale.id, allocated);
+        availablePayment -= allocated;
+      }
+    });
+
+    const profitMap = new Map<string, number>();
+    salesUpToCutoff.forEach(sale => {
+      const saleCost = getSalePurchaseCost(sale);
+      const saleTotal = sale.type === 'return' ? -Math.abs(sale.total) : sale.total;
+
+      if (sale.type === 'return') {
+        profitMap.set(sale.id, saleTotal - saleCost);
+        return;
+      }
+
+      if (sale.type === 'direct') {
+        profitMap.set(sale.id, saleTotal - saleCost);
+        return;
+      }
+
+      if (sale.type === 'credit') {
+        const initialPaid = sale.paidAmount || 0;
+        const allocatedCredit = allocatedCreditPaymentPerSale.get(sale.id) || 0;
+        const totalPaid = initialPaid + allocatedCredit;
+
+        const maxProfit = Math.max(0, saleTotal - saleCost);
+        const recognizedProfit = Math.max(0, Math.min(maxProfit, totalPaid - saleCost));
+        profitMap.set(sale.id, recognizedProfit);
+      }
+    });
+
+    return profitMap;
+  };
+
+  const periodStartIso = day ? `${month}-${day.padStart(2, "0")}T00:00:00.000Z` : `${month}-01T00:00:00.000Z`;
+  const periodEndIso = day ? `${month}-${day.padStart(2, "0")}T23:59:59.999Z` : `${month}-31T23:59:59.999Z`;
+
+  const profitMapEnd = useMemo(() => {
+    return getSalesProfitMapAtDate(allSales, allPayments, periodEndIso);
+  }, [allSales, allPayments, periodEndIso]);
+
+  const profitMapStart = useMemo(() => {
+    return getSalesProfitMapAtDate(allSales, allPayments, periodStartIso);
+  }, [allSales, allPayments, periodStartIso]);
+
+  const salePeriodProfits = useMemo(() => {
+    const map = new Map<string, number>();
+    allSales.forEach(sale => {
+      const pEnd = profitMapEnd.get(sale.id) || 0;
+      const pStart = profitMapStart.get(sale.id) || 0;
+      map.set(sale.id, pEnd - pStart);
+    });
+    return map;
+  }, [allSales, profitMapEnd, profitMapStart]);
 
   const totalRevenue = monthlySales.reduce((s, sale) => {
     if (sale.type === 'return') return s - Math.abs(sale.total);
-    // Include all sales (direct and credit) in total revenue
     return s + sale.total;
   }, 0);
 
@@ -81,7 +190,6 @@ export default function AnalytiquePage() {
   const totalCost = monthlySales.reduce((s, sale) => {
     const saleCost = sale.items.reduce((is, item) => is + getItemPurchaseCost(item), 0);
     if (sale.type === 'return') return s - Math.abs(saleCost);
-    // Include costs for credit sales as well
     return s + saleCost;
   }, 0);
 
@@ -89,7 +197,13 @@ export default function AnalytiquePage() {
     return sale.type === 'return' ? s - Math.abs(sale.reduction || 0) : s + (sale.reduction || 0);
   }, 0);
 
-  const profit = totalRevenue - totalCost - totalExpenses;
+  const totalSalesProfit = useMemo(() => {
+    let sum = 0;
+    salePeriodProfits.forEach(p => { sum += p; });
+    return sum;
+  }, [salePeriodProfits]);
+
+  const profit = totalSalesProfit - totalExpenses;
   const totalCaisse = venteEncaisser;
 
   const categorySalesData = useMemo(() => {
@@ -105,6 +219,7 @@ export default function AnalytiquePage() {
       icon?: string;
     }>();
 
+    // 1. Process revenue, cost, quantity for sales in selected period
     monthlySales.forEach(sale => {
       const isReturn = sale.type === 'return';
       const multiplier = isReturn ? -1 : 1;
@@ -131,9 +246,49 @@ export default function AnalytiquePage() {
 
         existing.revenue += subtotal * multiplier;
         existing.cost += itemCost * multiplier;
-        existing.profit += (subtotal - itemCost) * multiplier;
         existing.quantity += qty * multiplier;
 
+        map.set(catKey, existing);
+      });
+    });
+
+    // 2. Attribute period profits to categories proportionally
+    allSales.forEach(sale => {
+      const periodP = salePeriodProfits.get(sale.id) || 0;
+      if (periodP === 0) return;
+
+      const itemPotentials = sale.items.map(item => {
+        const subtotal = item.subtotal ?? ((item.customUnitPrice ?? item.product?.priceSale ?? 0) * item.quantity);
+        const itemCost = getItemPurchaseCost(item);
+        return Math.max(0, subtotal - itemCost);
+      });
+
+      const totalPotential = itemPotentials.reduce((a, b) => a + b, 0);
+
+      sale.items.forEach((item, idx) => {
+        const catKey = item.product?.category || "sans_categorie";
+        const catObj = categories.find(c => c.key === catKey);
+
+        const existing = map.get(catKey) || {
+          key: catKey,
+          label: catObj ? catObj.label : (catKey === "sans_categorie" ? "Sans catégorie" : catKey),
+          labelAr: catObj?.labelAr,
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+          quantity: 0,
+          color: catObj?.color || "#3f5362",
+          icon: catObj?.icon
+        };
+
+        let itemPeriodP = 0;
+        if (totalPotential > 0) {
+          itemPeriodP = periodP * (itemPotentials[idx] / totalPotential);
+        } else {
+          itemPeriodP = periodP / sale.items.length;
+        }
+
+        existing.profit += itemPeriodP;
         map.set(catKey, existing);
       });
     });
@@ -148,7 +303,7 @@ export default function AnalytiquePage() {
       .sort((a, b) => b.revenue - a.revenue);
 
     return { list, totalCatRevenue };
-  }, [monthlySales, categories]);
+  }, [monthlySales, allSales, salePeriodProfits, categories]);
 
   const [expandedDates, setExpandedDates] = useState<string[]>([]);
 
@@ -259,18 +414,33 @@ export default function AnalytiquePage() {
       map.set(dayKey, existing);
     });
 
-    const groups = Array.from(map.values()).map(group => ({
-      ...group,
-      productList: Array.from(group.productNames),
-      profit: group.revenue - group.cost - group.expenseAmount,
-    }));
+    const groups = Array.from(map.values()).map(group => {
+      const dayStartIso = `${group.date}T00:00:00.000Z`;
+      const dayEndIso = `${group.date}T23:59:59.999Z`;
+
+      const dayProfitMapEnd = getSalesProfitMapAtDate(allSales, allPayments, dayEndIso);
+      const dayProfitMapStart = getSalesProfitMapAtDate(allSales, allPayments, dayStartIso);
+
+      let daySalesProfit = 0;
+      allSales.forEach(sale => {
+        const pEnd = dayProfitMapEnd.get(sale.id) || 0;
+        const pStart = dayProfitMapStart.get(sale.id) || 0;
+        daySalesProfit += (pEnd - pStart);
+      });
+
+      return {
+        ...group,
+        productList: Array.from(group.productNames),
+        profit: daySalesProfit - group.expenseAmount,
+      };
+    });
 
     groups.forEach(group => {
       group.sales.sort((a, b) => a.date.localeCompare(b.date));
     });
 
     return groups.sort((a, b) => a.date.localeCompare(b.date));
-  }, [monthlySales, monthlyPayments, clients]);
+  }, [monthlySales, monthlyPayments, allSales, allPayments, clients, expenses]);
 
   return (
     <div className="p-8 lg:p-12 animate-fade-in bg-[#f4f8f8] min-h-screen font-sans text-gray-800">

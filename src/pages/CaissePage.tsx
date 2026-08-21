@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import {
-  Search, Plus, Minus, Trash2, Package, Printer
+  Search, Plus, Minus, Trash2, Package, Printer, Calendar
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,26 @@ import { CATEGORY_ICON_MAP } from "@/lib/icons";
 // Icon registry for resolving icon names to components
 const LUCIDE_ICON_MAP = CATEGORY_ICON_MAP;
 
+const getTodayString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getSaleDateString = (dateStr: string) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr.slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45", "46", "47"];
+const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45"];
 
 export default function CaissePage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -69,6 +87,7 @@ export default function CaissePage() {
   const [showRetour, setShowRetour] = useState(false);
   const [currentSaleId, setCurrentSaleId] = useState("");
   const [retourProductSearch, setRetourProductSearch] = useState("");
+  const [retourDateFilter, setRetourDateFilter] = useState(getTodayString());
   const [selectedSaleForReturn, setSelectedSaleForReturn] = useState<Sale | null>(null);
   const [returnQtys, setReturnQtys] = useState<Record<string, number>>({});
   const [recentSales, setRecentSales] = useState<Sale[]>([]);
@@ -633,6 +652,7 @@ export default function CaissePage() {
 
   const handleOpenRetour = () => {
     setRetourProductSearch("");
+    setRetourDateFilter(getTodayString());
     setSelectedSaleForReturn(null);
     setReturnQtys({});
     fetchRecentSales();
@@ -1426,17 +1446,42 @@ export default function CaissePage() {
           <div className="flex-1 overflow-auto p-8">
             {!selectedSaleForReturn ? (
               <div className="space-y-6">
-                <div className="space-y-2">
-                  <p className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Rechercher un produit, Ticket ou Client</p>
-                  <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-6 w-6 text-gray-400" />
-                    <Input
-                      placeholder="Saisissez le nom du produit, le #ID du ticket..."
-                      className="pl-14 h-16 rounded-2xl border-gray-200 text-lg shadow-sm focus:ring-orange-500"
-                      value={retourProductSearch}
-                      onChange={e => setRetourProductSearch(e.target.value)}
-                      autoFocus
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2 space-y-2">
+                    <p className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Rechercher un produit, Ticket ou Client</p>
+                    <div className="relative">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-6 w-6 text-gray-400" />
+                      <Input
+                        placeholder="Saisissez le nom du produit, le #ID du ticket..."
+                        className="pl-14 h-16 rounded-2xl border-gray-200 text-lg shadow-sm focus:ring-orange-500"
+                        value={retourProductSearch}
+                        onChange={e => setRetourProductSearch(e.target.value)}
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center pr-1">
+                      <p className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Jour</p>
+                      {retourDateFilter !== getTodayString() && (
+                        <button
+                          type="button"
+                          onClick={() => setRetourDateFilter(getTodayString())}
+                          className="text-[11px] font-bold text-orange-600 hover:underline"
+                        >
+                          Aujourd'hui
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
+                      <Input
+                        type="date"
+                        className="pl-12 h-16 rounded-2xl border-gray-200 text-base shadow-sm focus:ring-orange-500 font-bold"
+                        value={retourDateFilter}
+                        onChange={e => setRetourDateFilter(e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1454,13 +1499,15 @@ export default function CaissePage() {
                           itemIdx: idx,
                           clientName: clients.find(c => c.id === sale.clientId)?.name || 'Client Direct'
                         }))
-                      ).filter(record =>
-                        !retourProductSearch ||
-                        record.item.product.name.toLowerCase().includes(retourProductSearch.toLowerCase()) ||
-                        record.sale.id.toLowerCase().includes(retourProductSearch.toLowerCase()) ||
-                        record.sale.id.toUpperCase().slice(-6).includes(retourProductSearch.toUpperCase()) ||
-                        record.clientName.toLowerCase().includes(retourProductSearch.toLowerCase())
-                      );
+                      ).filter(record => {
+                        const matchDate = !retourDateFilter || getSaleDateString(record.sale.date) === retourDateFilter;
+                        const matchSearch = !retourProductSearch ||
+                          record.item.product.name.toLowerCase().includes(retourProductSearch.toLowerCase()) ||
+                          record.sale.id.toLowerCase().includes(retourProductSearch.toLowerCase()) ||
+                          record.sale.id.toUpperCase().slice(-6).includes(retourProductSearch.toUpperCase()) ||
+                          record.clientName.toLowerCase().includes(retourProductSearch.toLowerCase());
+                        return matchDate && matchSearch;
+                      });
 
                       if (recentSales.length === 0) {
                         return <div className="p-12 text-center text-gray-400 font-medium italic">Chargement des ventes... (ou aucune vente en base)</div>;
@@ -1469,7 +1516,7 @@ export default function CaissePage() {
                       if (saleItems.length === 0) {
                         return (
                           <div className="p-12 text-center text-gray-400 font-medium italic">
-                            {retourProductSearch ? "Aucun produit trouvé pour cette recherche." : "Aucune vente enregistrée."}
+                            {retourProductSearch || retourDateFilter ? "Aucun produit trouvé pour cette recherche ou date." : "Aucune vente enregistrée."}
                           </div>
                         );
                       }

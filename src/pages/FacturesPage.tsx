@@ -199,7 +199,7 @@ export default function FacturesPage() {
   const [itemCategory, setItemCategory] = useState<CategoryType>("hauts");
   const [itemBarcode, setItemBarcode] = useState("");
   const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-  const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45", "46", "47"];
+  const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45"];
   const [sizeQtys, setSizeQtys] = useState<Record<string, number>>({});
 
 

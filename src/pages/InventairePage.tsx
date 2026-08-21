@@ -12,7 +12,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { toast } from "sonner";
 
 const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45", "46", "47"];
+const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45"];
 
 export default function InventairePage() {
   const [products, setProducts] = useState<Product[]>([]);

@@ -27,7 +27,7 @@ const COLOR_PRESETS = [
 ];
 
 const SHIRT_SIZES_DISPLAY = "S, M, L, XL, XXL";
-const SHOE_SIZES_DISPLAY = "39 → 47";
+const SHOE_SIZES_DISPLAY = "39 → 45";
 
 const emptyCategory: Omit<Category, "id"> = {
     key: "",
