@@ -213,15 +213,15 @@ export default function FacturesPage() {
   }[]>([]);
   const [printMode, setPrintMode] = useState<"xprinter" | "a4">("xprinter");
 
-  type ThermalPreset = "40x20" | "50x25" | "50x30" | "38x25" | "30x20" | "58x40" | "custom";
+  type ThermalPreset = "20x40" | "40x20" | "50x25" | "50x30" | "38x25" | "30x20" | "58x40" | "custom";
   const [labelPreset, setLabelPreset] = useState<ThermalPreset>(() => {
-    return (localStorage.getItem("matjari_thermal_preset") as ThermalPreset) || "40x20";
+    return (localStorage.getItem("matjari_thermal_preset") as ThermalPreset) || "20x40";
   });
   const [customWidth, setCustomWidth] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_custom_width")) || 40;
+    return Number(localStorage.getItem("matjari_thermal_custom_width")) || 20;
   });
   const [customHeight, setCustomHeight] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_custom_height")) || 20;
+    return Number(localStorage.getItem("matjari_thermal_custom_height")) || 40;
   });
   const [columnsCount, setColumnsCount] = useState<number>(() => {
     return Number(localStorage.getItem("matjari_thermal_columns")) || 1;
@@ -229,14 +229,15 @@ export default function FacturesPage() {
 
   const getThermalDimensions = useCallback(() => {
     switch (labelPreset) {
+      case "20x40": return { width: 20, height: 40 };
       case "40x20": return { width: 40, height: 20 };
       case "50x25": return { width: 50, height: 25 };
       case "50x30": return { width: 50, height: 30 };
       case "38x25": return { width: 38, height: 25 };
       case "30x20": return { width: 30, height: 20 };
       case "58x40": return { width: 58, height: 40 };
-      case "custom": return { width: customWidth || 40, height: customHeight || 20 };
-      default: return { width: 40, height: 20 };
+      case "custom": return { width: customWidth || 20, height: customHeight || 40 };
+      default: return { width: 20, height: 40 };
     }
   }, [labelPreset, customWidth, customHeight]);
 
@@ -880,7 +881,6 @@ export default function FacturesPage() {
               <span class="name" style="font-size:${nameFontSize}px;">${item.name}</span>
               ${priceText ? `<span class="price" style="font-size:${priceFontSize}px;">${priceText}</span>` : ""}
               <div class="svg-container">${svgMarkup}</div>
-              <span class="code" style="font-size:${codeFontSize}px;">${item.barcode}</span>
             </div>
           </div>
         `;
@@ -1194,7 +1194,8 @@ export default function FacturesPage() {
                       <SelectValue placeholder="Format" />
                     </SelectTrigger>
                     <SelectContent className="rounded-xl font-bold text-xs">
-                      <SelectItem value="40x20">40 x 20 mm (Standard Petit)</SelectItem>
+                      <SelectItem value="20x40">20 x 40 mm (Standard Vertical)</SelectItem>
+                      <SelectItem value="40x20">40 x 20 mm (Standard Horizontal)</SelectItem>
                       <SelectItem value="50x25">50 x 25 mm (Moyen - Courant)</SelectItem>
                       <SelectItem value="50x30">50 x 30 mm (Standard Vêtement)</SelectItem>
                       <SelectItem value="38x25">38 x 25 mm (Accessoires/Bijoux)</SelectItem>
@@ -1304,9 +1305,6 @@ export default function FacturesPage() {
                         <div style={{ flex: 1, display: "flex", itemsCenter: "center", justifyCenter: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
                           <BarcodeSvg value={item.barcode} width={1.4} height={35} />
                         </div>
-                        <span style={{ fontSize: "10px", fontWeight: 800, color: "#000000", letterSpacing: "0.8px", lineHeight: 1, flexShrink: 0, textAlign: "center", width: "100%" }}>
-                          {item.barcode}
-                        </span>
                       </div>
                     ) : (
                       <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
@@ -1315,7 +1313,6 @@ export default function FacturesPage() {
                         <div className="h-10 w-full flex items-center justify-center">
                           <BarcodeSvg value={item.barcode} width={1.4} height={35} />
                         </div>
-                        <span className="text-[10px] font-bold text-slate-500 tracking-widest mt-1">{item.barcode}</span>
                       </div>
                     )}
                   </div>
