@@ -42,7 +42,7 @@ const generateBarcodeValue = (name: string): string => {
   return `${hashPart}${ts}`; // 13 digits total
 };
 
-function BarcodeSvg({ value, width = 1.6, height = 45 }: { value: string; width?: number; height?: number }) {
+function BarcodeSvg({ value, width = 1.5, height = 40 }: { value: string; width?: number; height?: number }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   useEffect(() => {
     if (svgRef.current && value) {
@@ -54,18 +54,25 @@ function BarcodeSvg({ value, width = 1.6, height = 45 }: { value: string; width?
             width,
             height,
             displayValue: false,
-            margin: 2,
+            margin: 0,
           });
+          const svgEl = svgRef.current;
+          const wAttr = svgEl.getAttribute("width") || "200";
+          const hAttr = svgEl.getAttribute("height") || `${height}`;
+          svgEl.setAttribute("viewBox", `0 0 ${wAttr} ${hAttr}`);
+          svgEl.removeAttribute("width");
+          svgEl.removeAttribute("height");
+          svgEl.setAttribute("style", "width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; object-fit: contain;");
         }
       } catch (e) {
         console.error("Barcode rendering error:", e);
       }
     }
   }, [value, width, height]);
-  return <svg ref={svgRef}></svg>;
+  return <svg ref={svgRef} style={{ width: "100%", height: "100%", maxWidth: "100%", display: "block" }}></svg>;
 }
 
-const generateBarcodeSvgMarkup = (value: string, width = 1.4, height = 35): string => {
+const generateBarcodeSvgMarkup = (value: string, width = 1.5, height = 40): string => {
   if (!value) return "";
   try {
     const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -76,8 +83,14 @@ const generateBarcodeSvgMarkup = (value: string, width = 1.4, height = 35): stri
         width,
         height,
         displayValue: false,
-        margin: 1,
+        margin: 0,
       });
+      const wAttr = svgEl.getAttribute("width") || "200";
+      const hAttr = svgEl.getAttribute("height") || `${height}`;
+      svgEl.setAttribute("viewBox", `0 0 ${wAttr} ${hAttr}`);
+      svgEl.removeAttribute("width");
+      svgEl.removeAttribute("height");
+      svgEl.setAttribute("style", "width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; object-fit: contain;");
       return svgEl.outerHTML;
     }
   } catch (e) {
@@ -114,6 +127,29 @@ const createInvoiceFormItem = (): InvoiceFormItem => ({
   priceSale: 0,
   expiryDate: "",
 });
+
+const getEffectiveSizeQtys = (item: { size?: string; sizeQtys?: Record<string, number>; quantity: number }): Record<string, number> | undefined => {
+  if (item.sizeQtys && Object.keys(item.sizeQtys).length > 0) {
+    return { ...item.sizeQtys };
+  }
+  if (!item.size) return undefined;
+  const res: Record<string, number> = {};
+  if (item.size.includes(":")) {
+    const parts = item.size.split("|");
+    for (const part of parts) {
+      const [sz, qtyStr] = part.split(":").map(s => s.trim());
+      if (sz && qtyStr) {
+        const q = parseInt(qtyStr, 10);
+        if (!isNaN(q) && q > 0) {
+          res[sz] = q;
+        }
+      }
+    }
+  } else if (item.size.trim()) {
+    res[item.size.trim()] = item.quantity;
+  }
+  return Object.keys(res).length > 0 ? res : undefined;
+};
 
 export default function FacturesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -176,6 +212,50 @@ export default function FacturesPage() {
     copies: number;
   }[]>([]);
   const [printMode, setPrintMode] = useState<"xprinter" | "a4">("xprinter");
+
+  type ThermalPreset = "40x20" | "50x25" | "50x30" | "38x25" | "30x20" | "58x40" | "custom";
+  const [labelPreset, setLabelPreset] = useState<ThermalPreset>(() => {
+    return (localStorage.getItem("matjari_thermal_preset") as ThermalPreset) || "40x20";
+  });
+  const [customWidth, setCustomWidth] = useState<number>(() => {
+    return Number(localStorage.getItem("matjari_thermal_custom_width")) || 40;
+  });
+  const [customHeight, setCustomHeight] = useState<number>(() => {
+    return Number(localStorage.getItem("matjari_thermal_custom_height")) || 20;
+  });
+  const [columnsCount, setColumnsCount] = useState<number>(() => {
+    return Number(localStorage.getItem("matjari_thermal_columns")) || 1;
+  });
+
+  const getThermalDimensions = useCallback(() => {
+    switch (labelPreset) {
+      case "40x20": return { width: 40, height: 20 };
+      case "50x25": return { width: 50, height: 25 };
+      case "50x30": return { width: 50, height: 30 };
+      case "38x25": return { width: 38, height: 25 };
+      case "30x20": return { width: 30, height: 20 };
+      case "58x40": return { width: 58, height: 40 };
+      case "custom": return { width: customWidth || 40, height: customHeight || 20 };
+      default: return { width: 40, height: 20 };
+    }
+  }, [labelPreset, customWidth, customHeight]);
+
+  const updateLabelPreset = (val: ThermalPreset) => {
+    setLabelPreset(val);
+    localStorage.setItem("matjari_thermal_preset", val);
+  };
+  const updateCustomWidth = (val: number) => {
+    setCustomWidth(val);
+    localStorage.setItem("matjari_thermal_custom_width", val.toString());
+  };
+  const updateCustomHeight = (val: number) => {
+    setCustomHeight(val);
+    localStorage.setItem("matjari_thermal_custom_height", val.toString());
+  };
+  const updateColumnsCount = (val: number) => {
+    setColumnsCount(val);
+    localStorage.setItem("matjari_thermal_columns", val.toString());
+  };
 
   // Add form state
   const [supplierId, setSupplierId] = useState("");
@@ -394,6 +474,7 @@ export default function FacturesPage() {
       priceBuy: item.priceBuy,
       priceSale: item.priceSale,
       size: item.size,
+      sizeQtys: getEffectiveSizeQtys(item),
       expiryDate: item.expiryDate || "",
     })));
 
@@ -404,28 +485,36 @@ export default function FacturesPage() {
   const revertStockForInvoice = async (invoice: Invoice) => {
     const factor = invoice.type === "achat" ? -1 : 1;
     const currentProds = await getProducts();
+    const prodMap = new Map<string, Product>();
+    currentProds.forEach(p => prodMap.set(p.id, { ...p, sizeStock: p.sizeStock ? { ...p.sizeStock } : undefined }));
+
     for (const item of invoice.items) {
-      const prod = currentProds.find(p => p.id === item.product.id);
+      const prod = prodMap.get(item.product.id);
       if (prod) {
+        const effectiveQtys = getEffectiveSizeQtys(item);
         const nextSizeStock = { ...(prod.sizeStock || {}) };
-        if (item.sizeQtys) {
-          Object.entries(item.sizeQtys).forEach(([sz, q]) => {
+        if (effectiveQtys) {
+          Object.entries(effectiveQtys).forEach(([sz, q]) => {
             nextSizeStock[sz] = (nextSizeStock[sz] || 0) + (q * factor);
           });
         }
-        await updateProduct({ ...prod, stock: prod.stock + (item.quantity * factor), sizeStock: nextSizeStock });
+        prod.stock = Math.max(0, prod.stock + (item.quantity * factor));
+        prod.sizeStock = nextSizeStock;
       }
+    }
+
+    const modifiedProds = Array.from(prodMap.values()).filter(p => {
+      const orig = currentProds.find(cp => cp.id === p.id);
+      return orig && (orig.stock !== p.stock || JSON.stringify(orig.sizeStock) !== JSON.stringify(p.sizeStock));
+    });
+    for (const p of modifiedProds) {
+      await updateProduct(p);
     }
   };
 
 
   const handleSubmitInvoice = async () => {
     try {
-      if (editingInvoiceId) {
-        const oldInv = invoices.find(i => i.id === editingInvoiceId);
-        if (oldInv) await revertStockForInvoice(oldInv);
-      }
-
       let supplier: Supplier;
       if (supplierId) {
         supplier = suppliers.find(s => s.id === supplierId)!;
@@ -449,86 +538,139 @@ export default function FacturesPage() {
         }
       }
 
-      const items: InvoiceItem[] = [];
-      const changedProducts: Product[] = [];
-
-      // Refresh current products to get accurate stock after reversal
+      // Fetch all current products from DB
       const currentProducts = await getProducts();
+      const prodMap = new Map<string, Product>();
+      currentProducts.forEach(p => prodMap.set(p.id, { ...p, sizeStock: p.sizeStock ? { ...p.sizeStock } : undefined }));
 
-      for (const item of invoiceItems) {
-        let product: Product;
-        if (item.isNew) {
-          // Try to find an existing product (maybe created earlier when adding the item)
-          let existing = currentProducts.find(p => p.id === item.productId);
-          if (!existing && item.barcode) {
-            existing = currentProducts.find(p => p.barcode && p.barcode === item.barcode);
+      // Fetch old invoice directly from DB if editing
+      let oldInv: Invoice | undefined;
+      if (editingInvoiceId) {
+        const allInvoices = await getInvoices();
+        oldInv = allInvoices.find(i => i.id === editingInvoiceId);
+      }
+
+      // Build Delta Map for product quantities & size stocks (net change)
+      const deltaMap = new Map<string, {
+        oldQty: number;
+        newQty: number;
+        oldSizes: Record<string, number>;
+        newSizes: Record<string, number>;
+      }>();
+
+      if (oldInv) {
+        for (const oldItem of oldInv.items) {
+          const pid = oldItem.product.id;
+          const oldQtys = getEffectiveSizeQtys(oldItem) || {};
+          const existing = deltaMap.get(pid) || { oldQty: 0, newQty: 0, oldSizes: {}, newSizes: {} };
+          existing.oldQty += oldItem.quantity;
+          Object.entries(oldQtys).forEach(([sz, q]) => {
+            existing.oldSizes[sz] = (existing.oldSizes[sz] || 0) + q;
+          });
+          deltaMap.set(pid, existing);
+        }
+      }
+
+      for (const newItem of invoiceItems) {
+        // Handle brand-new products added in this invoice
+        if (newItem.isNew) {
+          let existingProd = prodMap.get(newItem.productId);
+          if (!existingProd && newItem.barcode) {
+            existingProd = Array.from(prodMap.values()).find(p => p.barcode && p.barcode === newItem.barcode);
           }
-
-          if (existing) {
-            const nextSizeStock = { ...(existing.sizeStock || {}) };
-            if (item.sizeQtys) {
-              Object.entries(item.sizeQtys).forEach(([sz, q]) => {
-                nextSizeStock[sz] = (nextSizeStock[sz] || 0) + q;
-              });
-            }
-            product = {
-              ...existing,
-              stock: existing.stock + item.quantity,
-              sizeStock: nextSizeStock,
-              priceBuy: item.priceBuy,
-              priceSale: item.priceSale,
-              expiryDate: item.expiryDate || existing.expiryDate,
-            };
-            changedProducts.push(product);
+          if (existingProd) {
+            newItem.productId = existingProd.id;
+            newItem.isNew = false;
           } else {
-            product = {
-              id: generateId(), name: item.newName, nameAr: "", category: item.newCategory as any,
-              priceSale: item.priceSale, priceBuy: item.priceBuy, stock: item.quantity,
-              sizeStock: item.sizeQtys ? { ...item.sizeQtys } : undefined,
-              unit: "unité", expiryDate: item.expiryDate || undefined,
-              // include barcode if provided
-              ...(item.barcode ? { barcode: item.barcode } : {})
+            const newProdId = newItem.productId || generateId();
+            newItem.productId = newProdId;
+            const newProd: Product = {
+              id: newProdId,
+              name: newItem.newName,
+              nameAr: "",
+              category: newItem.newCategory as any,
+              priceSale: newItem.priceSale,
+              priceBuy: newItem.priceBuy,
+              stock: 0, // Stock will be updated by delta logic below
+              sizeStock: undefined,
+              unit: "unité",
+              expiryDate: newItem.expiryDate || undefined,
+              ...(newItem.barcode ? { barcode: newItem.barcode } : {})
             };
-            changedProducts.push(product);
+            prodMap.set(newProdId, newProd);
           }
-        } else {
-          const existing = currentProducts.find(p => p.id === item.productId);
-          if (!existing) continue;
-          const nextSizeStock = { ...(existing.sizeStock || {}) };
-          if (item.sizeQtys) {
-            Object.entries(item.sizeQtys).forEach(([sz, q]) => {
-              nextSizeStock[sz] = (nextSizeStock[sz] || 0) + q;
+        }
+
+        const pid = newItem.productId;
+        const newQtys = getEffectiveSizeQtys(newItem) || {};
+        const existing = deltaMap.get(pid) || { oldQty: 0, newQty: 0, oldSizes: {}, newSizes: {} };
+        existing.newQty += newItem.quantity;
+        Object.entries(newQtys).forEach(([sz, q]) => {
+          existing.newSizes[sz] = (existing.newSizes[sz] || 0) + q;
+        });
+        deltaMap.set(pid, existing);
+      }
+
+      // Apply net deltas to prodMap
+      for (const [pid, delta] of deltaMap.entries()) {
+        const netQtyDelta = delta.newQty - delta.oldQty;
+        const prod = prodMap.get(pid);
+        if (prod) {
+          if (netQtyDelta !== 0) {
+            prod.stock = Math.max(0, prod.stock + netQtyDelta);
+          }
+
+          const allSizes = new Set([
+            ...Object.keys(delta.oldSizes),
+            ...Object.keys(delta.newSizes)
+          ]);
+
+          if (allSizes.size > 0) {
+            const nextSizeStock = { ...(prod.sizeStock || {}) };
+            allSizes.forEach(sz => {
+              const oldSzQty = delta.oldSizes[sz] || 0;
+              const newSzQty = delta.newSizes[sz] || 0;
+              const szDelta = newSzQty - oldSzQty;
+              if (szDelta !== 0) {
+                nextSizeStock[sz] = Math.max(0, (nextSizeStock[sz] || 0) + szDelta);
+              }
             });
+            prod.sizeStock = nextSizeStock;
           }
-          product = {
-            ...existing,
-            stock: existing.stock + item.quantity,
-            sizeStock: nextSizeStock,
+        }
+      }
+
+      // Save all modified products
+      const productsToSave = Array.from(prodMap.values());
+      if (productsToSave.length > 0) {
+        await saveProducts(productsToSave);
+      }
+
+      // Construct final InvoiceItem array for the invoice record
+      const items: InvoiceItem[] = invoiceItems.map(item => {
+        const prod = prodMap.get(item.productId)!;
+        const effectiveSizeQtys = getEffectiveSizeQtys(item);
+        return {
+          product: {
+            ...prod,
             priceBuy: item.priceBuy,
             priceSale: item.priceSale,
-            expiryDate: item.expiryDate || existing.expiryDate,
-          };
-          changedProducts.push(product);
-        }
-        items.push({ product, quantity: item.quantity, size: item.size, sizeQtys: item.sizeQtys, priceBuy: item.priceBuy, priceSale: item.priceSale, expiryDate: item.expiryDate });
-      }
-
-
-
-
-      if (changedProducts.length > 0) {
-        await saveProducts(changedProducts);
-      }
+          },
+          quantity: item.quantity,
+          size: item.size,
+          sizeQtys: effectiveSizeQtys,
+          priceBuy: item.priceBuy,
+          priceSale: item.priceSale,
+          expiryDate: item.expiryDate
+        };
+      });
 
       const finalTotal = items.reduce((s, i) => s + i.priceBuy * i.quantity, 0);
       let modificationLog = "";
-      if (editingInvoiceId) {
-        const oldInv = invoices.find(i => i.id === editingInvoiceId);
-        if (oldInv) {
-          modificationLog = `Total: ${formatDZD(oldInv.total)} → ${formatDZD(finalTotal)}`;
-          if (oldInv.items.length !== items.length) {
-            modificationLog += ` (${items.length} articles)`;
-          }
+      if (editingInvoiceId && oldInv) {
+        modificationLog = `Total: ${formatDZD(oldInv.total)} → ${formatDZD(finalTotal)}`;
+        if (oldInv.items.length !== items.length) {
+          modificationLog += ` (${items.length} articles)`;
         }
       }
 
@@ -561,6 +703,8 @@ export default function FacturesPage() {
 
       const allProducts = await getProducts();
       setProducts(allProducts);
+
+      window.dispatchEvent(new Event("novaInventoryUpdated"));
 
       resetAddForm();
       setView("list");
@@ -600,6 +744,8 @@ export default function FacturesPage() {
       const prods = await getProducts();
       setProducts(prods);
 
+      window.dispatchEvent(new Event("novaInventoryUpdated"));
+
       setReturnInvoiceId("");
       setReturnItems([]);
       setView("list");
@@ -613,13 +759,36 @@ export default function FacturesPage() {
   const handleDeleteInvoice = async (invoice: Invoice) => {
     if (!window.confirm(`Êtes-vous sûr de vouloir supprimer la facture ${invoice.number} ? Les stocks seront mis à jour en conséquence.`)) return;
     try {
-      await revertStockForInvoice(invoice);
+      const currentProducts = await getProducts();
+      const prodMap = new Map<string, Product>();
+      currentProducts.forEach(p => prodMap.set(p.id, { ...p, sizeStock: p.sizeStock ? { ...p.sizeStock } : undefined }));
+
+      for (const item of invoice.items) {
+        const prod = prodMap.get(item.product.id);
+        if (prod) {
+          const effectiveQtys = getEffectiveSizeQtys(item);
+          prod.stock = Math.max(0, prod.stock - item.quantity);
+          if (effectiveQtys) {
+            const nextSizeStock = { ...(prod.sizeStock || {}) };
+            Object.entries(effectiveQtys).forEach(([sz, q]) => {
+              nextSizeStock[sz] = Math.max(0, (nextSizeStock[sz] || 0) - q);
+            });
+            prod.sizeStock = nextSizeStock;
+          }
+        }
+      }
+      const productsToSave = Array.from(prodMap.values());
+      if (productsToSave.length > 0) {
+        await saveProducts(productsToSave);
+      }
+
       await deleteInvoice(invoice.id);
       setInvoices(prev => prev.filter(i => i.id !== invoice.id));
       setSelectedInvoice(null);
       // Refresh products after stock update
       const prods = await getProducts();
       setProducts(prods);
+      window.dispatchEvent(new Event("novaInventoryUpdated"));
       toast.success("Facture supprimée et stock mis à jour");
     } catch (error) {
       console.error("error deleting invoice", error);
@@ -686,21 +855,40 @@ export default function FacturesPage() {
     }
 
     const isThermal = printMode === "xprinter";
+    const { width: labelW, height: labelH } = getThermalDimensions();
 
-    const labelsHtml = printList.map(item => {
-      const svgMarkup = generateBarcodeSvgMarkup(item.barcode, isThermal ? 1.3 : 1.4, isThermal ? 32 : 38);
-      const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
-      if (isThermal) {
+    let labelsHtml = "";
+
+    if (isThermal) {
+      // For thermal: each label is wrapped in a page-container.
+      // The content is rotated 90° so it prints correctly on the sticker.
+      // Page is set to labelH x labelW (portrait of the sticker),
+      // and content is rotated to fill the landscape area.
+      const contentW = labelW; // the visual width of label content
+      const contentH = labelH; // the visual height of label content
+      const nameFontSize = Math.max(6, Math.min(10, Math.floor(contentH * 0.35)));
+      const priceFontSize = Math.max(7, Math.min(11, Math.floor(contentH * 0.4)));
+      const codeFontSize = Math.max(5.5, Math.min(9, Math.floor(contentH * 0.3)));
+      const barcodeSvgHeight = Math.max(20, Math.min(40, Math.floor(contentH * 1.2)));
+
+      labelsHtml = printList.map(item => {
+        const svgMarkup = generateBarcodeSvgMarkup(item.barcode, 1.2, barcodeSvgHeight);
+        const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
         return `
-          <div class="thermal-label">
-            <div class="brand">MATJARI</div>
-            <div class="name">${item.name}</div>
-            ${priceText ? `<div class="price">${priceText}</div>` : ""}
-            <div class="svg-container">${svgMarkup}</div>
-            <div class="code">${item.barcode}</div>
+          <div class="page-container">
+            <div class="rotated-label">
+              <span class="name" style="font-size:${nameFontSize}px;">${item.name}</span>
+              ${priceText ? `<span class="price" style="font-size:${priceFontSize}px;">${priceText}</span>` : ""}
+              <div class="svg-container">${svgMarkup}</div>
+              <span class="code" style="font-size:${codeFontSize}px;">${item.barcode}</span>
+            </div>
           </div>
         `;
-      } else {
+      }).join("");
+    } else {
+      labelsHtml = printList.map(item => {
+        const svgMarkup = generateBarcodeSvgMarkup(item.barcode, 1.4, 36);
+        const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
         return `
           <div class="a4-card">
             <div class="name">${item.name}</div>
@@ -709,86 +897,119 @@ export default function FacturesPage() {
             <div class="code">${item.barcode}</div>
           </div>
         `;
-      }
-    }).join("");
+      }).join("");
+    }
+
+    // For thermal: the page is set in PORTRAIT of the sticker.
+    // The sticker is labelW wide x labelH tall (e.g. 40x20).
+    // The printer feeds paper with width = print head width.
+    // We set @page to labelH x labelW (swapped) so the page is
+    // portrait-oriented relative to the feed direction, then rotate
+    // the content 90° to fill the landscape area.
+    // This ensures content fits even if the driver ignores @page size.
+    const pageW = labelH; // swapped: page width = label height
+    const pageH = labelW; // swapped: page height = label width
 
     const styles = isThermal
       ? `
         @page {
-          size: 50mm 30mm;
+          size: ${pageW}mm ${pageH}mm;
           margin: 0;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
         html, body {
-          width: 50mm;
-          height: 30mm;
           margin: 0;
           padding: 0;
           background: #fff;
-          font-family: system-ui, -apple-system, sans-serif;
+          font-family: Arial, Helvetica, sans-serif;
+          width: ${pageW}mm;
+          overflow: hidden;
         }
-        .thermal-label {
-          width: 50mm;
-          height: 30mm;
-          box-sizing: border-box;
-          padding: 1.5mm 2mm;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          text-align: center;
+        .page-container {
+          width: ${pageW}mm;
+          height: ${pageH}mm;
+          overflow: hidden;
+          position: relative;
           page-break-after: always;
           break-after: page;
           page-break-inside: avoid;
           break-inside: avoid;
-          overflow: hidden;
         }
-        .brand {
-          font-size: 7px;
-          font-weight: 900;
-          letter-spacing: 1px;
-          color: #64748b;
-          text-transform: uppercase;
-          line-height: 1;
-          margin-bottom: 1px;
+        .page-container:last-child {
+          page-break-after: auto;
+          break-after: auto;
+        }
+        .rotated-label {
+          /* The label content is laid out as labelW x labelH,
+             then rotated -90deg and repositioned to fit inside
+             the pageW x pageH page container. */
+          position: absolute;
+          width: ${labelW}mm;
+          height: ${labelH}mm;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%) rotate(-90deg);
+          transform-origin: center center;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0.5mm 1mm;
+          overflow: hidden;
+          background: #fff;
         }
         .name {
-          font-size: 9px;
           font-weight: 800;
           text-transform: uppercase;
-          color: #0f172a;
-          max-width: 46mm;
+          color: #000;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          line-height: 1.1;
+          width: 100%;
+          text-align: center;
+          line-height: 1.15;
+          flex-shrink: 0;
         }
         .price {
-          font-size: 10px;
           font-weight: 900;
           color: #000;
-          line-height: 1.1;
-          margin-top: 1px;
+          white-space: nowrap;
+          width: 100%;
+          text-align: center;
+          line-height: 1.15;
+          flex-shrink: 0;
         }
         .svg-container {
-          margin-top: 1px;
           display: flex;
           justify-content: center;
           align-items: center;
-          max-width: 46mm;
+          width: 100%;
+          flex: 1;
+          min-height: 0;
+          overflow: hidden;
         }
         .svg-container svg {
-          max-width: 46mm;
-          height: auto;
+          width: 100%;
+          height: 100%;
+          max-width: 100%;
+          max-height: 100%;
           display: block;
+          object-fit: contain;
         }
         .code {
-          font-size: 8px;
           font-weight: 700;
-          color: #334155;
+          color: #000;
           letter-spacing: 0.5px;
-          margin-top: 1px;
           line-height: 1;
+          flex-shrink: 0;
+          text-align: center;
+          width: 100%;
         }
       `
       : `
@@ -835,7 +1056,7 @@ export default function FacturesPage() {
         .price {
           font-size: 10px;
           font-weight: 900;
-          color: #0284c7;
+          color: #10b981;
           margin-top: 1px;
         }
         .svg-container {
@@ -849,10 +1070,10 @@ export default function FacturesPage() {
           display: block;
         }
         .code {
-          font-size: 8px;
+          font-size: 8.5px;
           font-weight: 700;
           color: #475569;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.8px;
           margin-top: 1px;
         }
         @media print {
@@ -922,6 +1143,207 @@ export default function FacturesPage() {
         setTimeout(() => { win.print(); }, 300);
       }
     }
+  };
+
+  // ─── RENDER BARCODE PREVIEW MODAL ─────────────────────────────────────────
+  const renderBarcodeModal = () => {
+    const { width: curW, height: curH } = getThermalDimensions();
+
+    return (
+      <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
+        <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
+          <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                <Barcode className="h-7 w-7 text-primary" />
+                Modèle & Aperçu des Étiquettes Code-barres
+              </DialogTitle>
+              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
+                Consultez le rendu visuel des étiquettes et ajustez les réglages avant impression
+              </p>
+            </div>
+
+            {/* Mode Selection */}
+            <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 self-start md:self-auto">
+              <button
+                type="button"
+                onClick={() => setPrintMode("xprinter")}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "xprinter" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
+              >
+                <Printer className="h-4 w-4" />
+                Xprinter XP-420B (Thermique)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintMode("a4")}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "a4" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
+              >
+                📄 Planche A4
+              </button>
+            </div>
+          </DialogHeader>
+
+          {/* Thermal Label Settings Bar */}
+          {printMode === "xprinter" && (
+            <div className="bg-slate-100/80 px-8 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Format Étiquette</label>
+                  <Select value={labelPreset} onValueChange={(v: ThermalPreset) => updateLabelPreset(v)}>
+                    <SelectTrigger className="h-10 bg-white border-slate-300 rounded-xl font-extrabold text-xs px-3 min-w-[170px] shadow-sm">
+                      <SelectValue placeholder="Format" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl font-bold text-xs">
+                      <SelectItem value="40x20">40 x 20 mm (Standard Petit)</SelectItem>
+                      <SelectItem value="50x25">50 x 25 mm (Moyen - Courant)</SelectItem>
+                      <SelectItem value="50x30">50 x 30 mm (Standard Vêtement)</SelectItem>
+                      <SelectItem value="38x25">38 x 25 mm (Accessoires/Bijoux)</SelectItem>
+                      <SelectItem value="30x20">30 x 20 mm (Ultra-Compact)</SelectItem>
+                      <SelectItem value="58x40">58 x 40 mm (Grand Format)</SelectItem>
+                      <SelectItem value="custom">Personnalisé (mm)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {labelPreset === "custom" && (
+                  <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-xl border border-slate-300 shadow-sm mt-4 md:mt-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-black uppercase text-slate-400">L:</span>
+                      <input
+                        type="number"
+                        min={10}
+                        max={150}
+                        value={customWidth}
+                        onChange={e => updateCustomWidth(Number(e.target.value) || 40)}
+                        className="w-12 text-center font-black text-xs h-7 border rounded outline-none"
+                      />
+                      <span className="text-[10px] text-slate-400 font-bold">mm</span>
+                    </div>
+                    <span className="text-slate-300 font-bold">×</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-black uppercase text-slate-400">H:</span>
+                      <input
+                        type="number"
+                        min={10}
+                        max={150}
+                        value={customHeight}
+                        onChange={e => updateCustomHeight(Number(e.target.value) || 20)}
+                        className="w-12 text-center font-black text-xs h-7 border rounded outline-none"
+                      />
+                      <span className="text-[10px] text-slate-400 font-bold">mm</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Disposition Rouleau (Étiquettes/ligne)</label>
+                <div className="flex items-center bg-white p-1 rounded-xl border border-slate-300 shadow-sm gap-1">
+                  {[1, 2, 3, 4].map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => updateColumnsCount(c)}
+                      className={`px-3 py-1 rounded-lg text-xs font-black transition-all ${columnsCount === c ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+                    >
+                      {c} {c === 1 ? "par ligne" : "par ligne"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="p-8 max-h-[55vh] overflow-y-auto space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {modalBarcodeItems.map((item, idx) => (
+                <div key={item.id} className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 pr-3">
+                      <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
+                      <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "Prix non fixé"}</p>
+                    </div>
+                    <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
+                      <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={item.copies}
+                        onChange={e => {
+                          const val = Math.max(1, Number(e.target.value) || 1);
+                          setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
+                        }}
+                        className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* STICKER MODEL PREVIEW CARD */}
+                  <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                      {printMode === "xprinter" ? `Modèle Xprinter (${curW}×${curH}mm ${columnsCount > 1 ? `• ${columnsCount}/ligne` : ""})` : "Modèle étiquette A4"}
+                    </span>
+                    {printMode === "xprinter" ? (
+                      <div
+                        className="bg-white rounded-xl border-2 border-slate-900 shadow-md p-2 flex flex-col items-center justify-between"
+                        style={{
+                          width: "210px",
+                          height: `${Math.max(90, Math.round(210 * (curH / curW)))}px`,
+                          boxSizing: "border-box"
+                        }}
+                      >
+                        <span style={{ fontSize: "11px", fontWeight: 800, textTransform: "uppercase", color: "#000000", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0 }}>
+                          {item.name}
+                        </span>
+                        {item.priceSale > 0 && (
+                          <span style={{ fontSize: "12px", fontWeight: 900, color: "#000000", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0, marginTop: "1px" }}>
+                            {formatDZD(item.priceSale)}
+                          </span>
+                        )}
+                        <div style={{ flex: 1, display: "flex", itemsCenter: "center", justifyCenter: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
+                          <BarcodeSvg value={item.barcode} width={1.4} height={35} />
+                        </div>
+                        <span style={{ fontSize: "10px", fontWeight: 800, color: "#000000", letterSpacing: "0.8px", lineHeight: 1, flexShrink: 0, textAlign: "center", width: "100%" }}>
+                          {item.barcode}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
+                        <span className="text-xs font-black text-slate-900 uppercase max-w-[170px] truncate mb-1">{item.name}</span>
+                        {item.priceSale > 0 && <span className="text-xs font-extrabold text-primary mb-1">{formatDZD(item.priceSale)}</span>}
+                        <div className="h-10 w-full flex items-center justify-center">
+                          <BarcodeSvg value={item.barcode} width={1.4} height={35} />
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-500 tracking-widest mt-1">{item.barcode}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-6 bg-white border-t flex items-center justify-between">
+            <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
+              Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, i) => acc + i.copies, 0)}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
+                Fermer
+              </Button>
+              <Button
+                onClick={handleExecutePrintBarcodes}
+                className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
+              >
+                <Printer className="h-5 w-5" />
+                Lancer l'impression
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   };
 
   // ─── ADD FACTURE VIEW ──────────────────────────────────────────────────────
@@ -1278,100 +1700,7 @@ export default function FacturesPage() {
         </footer>
 
         {/* BARCODE PREVIEW & MODEL MODAL inside view === add */}
-        <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
-          <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
-            <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
-                  <Barcode className="h-7 w-7 text-primary" />
-                  Modèle & Aperçu des Étiquettes Code-barres
-                </DialogTitle>
-                <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
-                  Consultez le rendu visuel des étiquettes et ajustez le nombre d'exemplaires avant impression
-                </p>
-              </div>
-
-              {/* Mode Selection */}
-              <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 self-start md:self-auto">
-                <button
-                  type="button"
-                  onClick={() => setPrintMode("xprinter")}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "xprinter" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
-                >
-                  <Printer className="h-4 w-4" />
-                  Xprinter XP-420B (Thermique)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrintMode("a4")}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "a4" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
-                >
-                  📄 Planche A4
-                </button>
-              </div>
-            </DialogHeader>
-
-            <div className="p-8 max-h-[60vh] overflow-y-auto space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {modalBarcodeItems.map((item, idx) => (
-                  <div key={item.id} className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-4">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1 pr-3">
-                        <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
-                        <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "Prix non fixé"}</p>
-                      </div>
-                      <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
-                        <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={100}
-                          value={item.copies}
-                          onChange={e => {
-                            const val = Math.max(1, Number(e.target.value) || 1);
-                            setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
-                          }}
-                          className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    {/* STICKER MODEL PREVIEW CARD */}
-                    <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
-                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                        {printMode === "xprinter" ? "Modèle étiquette Xprinter (50x30mm)" : "Modèle étiquette A4"}
-                      </span>
-                      <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
-                        <span className="text-xs font-black text-slate-900 uppercase max-w-[170px] truncate mb-1">{item.name}</span>
-                        {item.priceSale > 0 && <span className="text-xs font-extrabold text-primary mb-1">{formatDZD(item.priceSale)}</span>}
-                        <BarcodeSvg value={item.barcode} width={1.5} height={40} />
-                        <span className="text-[10px] font-bold text-slate-500 tracking-widest mt-1">{item.barcode}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-6 bg-white border-t flex items-center justify-between">
-              <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
-                Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, i) => acc + i.copies, 0)}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <Button variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
-                  Fermer
-                </Button>
-                <Button
-                  onClick={handleExecutePrintBarcodes}
-                  className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
-                >
-                  <Printer className="h-5 w-5" />
-                  Lancer l'impression
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        {renderBarcodeModal()}
       </div>
     );
   }
@@ -1872,100 +2201,7 @@ export default function FacturesPage() {
       </Dialog>
 
       {/* BARCODE PREVIEW & MODEL MODAL */}
-      <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
-        <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
-          <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
-                <Barcode className="h-7 w-7 text-primary" />
-                Modèle & Aperçu des Étiquettes Code-barres
-              </DialogTitle>
-              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
-                Consultez le rendu visuel des étiquettes et ajustez le nombre d'exemplaires avant impression
-              </p>
-            </div>
-
-            {/* Mode Selection */}
-            <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 self-start md:self-auto">
-              <button
-                type="button"
-                onClick={() => setPrintMode("xprinter")}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "xprinter" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
-              >
-                <Printer className="h-4 w-4" />
-                Xprinter XP-420B (Thermique)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintMode("a4")}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "a4" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
-              >
-                📄 Planche A4
-              </button>
-            </div>
-          </DialogHeader>
-
-          <div className="p-8 max-h-[60vh] overflow-y-auto space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {modalBarcodeItems.map((item, idx) => (
-                <div key={item.id} className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-4">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 pr-3">
-                      <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
-                      <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "Prix non fixé"}</p>
-                    </div>
-                    <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
-                      <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={100}
-                        value={item.copies}
-                        onChange={e => {
-                          const val = Math.max(1, Number(e.target.value) || 1);
-                          setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
-                        }}
-                        className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* STICKER MODEL PREVIEW CARD */}
-                  <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
-                      {printMode === "xprinter" ? "Modèle étiquette Xprinter (50x30mm)" : "Modèle étiquette A4"}
-                    </span>
-                    <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
-                      <span className="text-xs font-black text-slate-900 uppercase max-w-[170px] truncate mb-1">{item.name}</span>
-                      {item.priceSale > 0 && <span className="text-xs font-extrabold text-primary mb-1">{formatDZD(item.priceSale)}</span>}
-                      <BarcodeSvg value={item.barcode} width={1.5} height={40} />
-                      <span className="text-[10px] font-bold text-slate-500 tracking-widest mt-1">{item.barcode}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-6 bg-white border-t flex items-center justify-between">
-            <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
-              Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, i) => acc + i.copies, 0)}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
-                Fermer
-              </Button>
-              <Button
-                onClick={handleExecutePrintBarcodes}
-                className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
-              >
-                <Printer className="h-5 w-5" />
-                Lancer l'impression
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {renderBarcodeModal()}
     </div>
   );
 }
