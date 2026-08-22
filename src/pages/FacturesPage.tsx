@@ -213,31 +213,40 @@ export default function FacturesPage() {
   }[]>([]);
   const [printMode, setPrintMode] = useState<"xprinter" | "a4">("xprinter");
 
-  type ThermalPreset = "20x40" | "40x20" | "50x25" | "50x30" | "38x25" | "30x20" | "58x40" | "custom";
+  type ThermalPreset = "40x20" | "50x25" | "50x30" | "38x25" | "30x20" | "58x40" | "20x40" | "custom";
   const [labelPreset, setLabelPreset] = useState<ThermalPreset>(() => {
-    return (localStorage.getItem("matjari_thermal_preset") as ThermalPreset) || "20x40";
+    const saved = localStorage.getItem("matjari_thermal_preset") as ThermalPreset;
+    if (!saved || saved === "20x40") return "40x20";
+    return saved;
   });
   const [customWidth, setCustomWidth] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_custom_width")) || 20;
+    return Number(localStorage.getItem("matjari_thermal_custom_width")) || 40;
   });
   const [customHeight, setCustomHeight] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_custom_height")) || 40;
+    return Number(localStorage.getItem("matjari_thermal_custom_height")) || 20;
   });
   const [columnsCount, setColumnsCount] = useState<number>(() => {
     return Number(localStorage.getItem("matjari_thermal_columns")) || 1;
   });
+  type ThermalRotation = 0 | 90 | 180 | 270;
+  const [thermalRotation, setThermalRotation] = useState<ThermalRotation>(() => {
+    return (Number(localStorage.getItem("matjari_thermal_rotation")) as ThermalRotation) || 0;
+  });
+  const [showBarcodeText, setShowBarcodeText] = useState<boolean>(() => {
+    return localStorage.getItem("matjari_thermal_show_code") === "true";
+  });
 
   const getThermalDimensions = useCallback(() => {
     switch (labelPreset) {
-      case "20x40": return { width: 20, height: 40 };
       case "40x20": return { width: 40, height: 20 };
       case "50x25": return { width: 50, height: 25 };
       case "50x30": return { width: 50, height: 30 };
       case "38x25": return { width: 38, height: 25 };
       case "30x20": return { width: 30, height: 20 };
       case "58x40": return { width: 58, height: 40 };
-      case "custom": return { width: customWidth || 20, height: customHeight || 40 };
-      default: return { width: 20, height: 40 };
+      case "20x40": return { width: 20, height: 40 };
+      case "custom": return { width: customWidth || 40, height: customHeight || 20 };
+      default: return { width: 40, height: 20 };
     }
   }, [labelPreset, customWidth, customHeight]);
 
@@ -256,6 +265,23 @@ export default function FacturesPage() {
   const updateColumnsCount = (val: number) => {
     setColumnsCount(val);
     localStorage.setItem("matjari_thermal_columns", val.toString());
+  };
+  const updateThermalRotation = (rot: ThermalRotation) => {
+    setThermalRotation(rot);
+    localStorage.setItem("matjari_thermal_rotation", rot.toString());
+  };
+  const updateShowBarcodeText = (val: boolean) => {
+    setShowBarcodeText(val);
+    localStorage.setItem("matjari_thermal_show_code", val ? "true" : "false");
+  };
+  const swapDimensions = () => {
+    const { width, height } = getThermalDimensions();
+    setLabelPreset("custom");
+    setCustomWidth(height);
+    setCustomHeight(width);
+    localStorage.setItem("matjari_thermal_preset", "custom");
+    localStorage.setItem("matjari_thermal_custom_width", height.toString());
+    localStorage.setItem("matjari_thermal_custom_height", width.toString());
   };
 
   // Add form state
@@ -861,59 +887,41 @@ export default function FacturesPage() {
     let labelsHtml = "";
 
     if (isThermal) {
-      // For thermal: each label is wrapped in a page-container.
-      // The content is rotated 90° so it prints correctly on the sticker.
-      // Page is set to labelH x labelW (portrait of the sticker),
-      // and content is rotated to fill the landscape area.
-      const contentW = labelW; // the visual width of label content
-      const contentH = labelH; // the visual height of label content
-      const nameFontSize = Math.max(6, Math.min(10, Math.floor(contentH * 0.35)));
-      const priceFontSize = Math.max(7, Math.min(11, Math.floor(contentH * 0.4)));
-      const codeFontSize = Math.max(5.5, Math.min(9, Math.floor(contentH * 0.3)));
-      const barcodeSvgHeight = Math.max(20, Math.min(40, Math.floor(contentH * 1.2)));
+      const isRotated = thermalRotation === 90 || thermalRotation === 270;
+      const contentW = isRotated ? labelH : labelW;
+      const contentH = isRotated ? labelW : labelH;
+      const availH = Math.max(10, contentH - 5);
+
+      const nameFontSize = Math.max(6, Math.min(10, Math.floor(availH * 0.3)));
+      const priceFontSize = Math.max(7, Math.min(11, Math.floor(availH * 0.35)));
+      const codeFontSize = Math.max(5.5, Math.min(9, Math.floor(availH * 0.25)));
+      const barcodeSvgHeight = Math.max(18, Math.min(38, Math.floor(availH * 1.0)));
 
       labelsHtml = printList.map(item => {
         const svgMarkup = generateBarcodeSvgMarkup(item.barcode, 1.2, barcodeSvgHeight);
         const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
-        return `
-          <div class="page-container">
-            <div class="rotated-label">
-              <span class="name" style="font-size:${nameFontSize}px;">${item.name}</span>
-              ${priceText ? `<span class="price" style="font-size:${priceFontSize}px;">${priceText}</span>` : ""}
-              <div class="svg-container">${svgMarkup}</div>
-            </div>
-          </div>
-        `;
+        const innerContent = `<span class="name" style="font-size:${nameFontSize}px;">${item.name}</span>` +
+          (priceText ? `<span class="price" style="font-size:${priceFontSize}px;">${priceText}</span>` : "") +
+          `<div class="svg-container">${svgMarkup}</div>`;
+
+        if (thermalRotation === 0) {
+          return `<div class="page-container"><div class="thermal-label-content">${innerContent}</div></div>`;
+        } else {
+          return `<div class="page-container"><div class="thermal-label-content rotated" style="width:${labelH}mm;height:${labelW}mm;transform:translate(-50%,-50%) rotate(${thermalRotation}deg);">${innerContent}</div></div>`;
+        }
       }).join("");
     } else {
       labelsHtml = printList.map(item => {
         const svgMarkup = generateBarcodeSvgMarkup(item.barcode, 1.4, 36);
         const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
-        return `
-          <div class="a4-card">
-            <div class="name">${item.name}</div>
-            ${priceText ? `<div class="price">${priceText}</div>` : ""}
-            <div class="svg-container">${svgMarkup}</div>
-            <div class="code">${item.barcode}</div>
-          </div>
-        `;
+        return `<div class="a4-card"><div class="name">${item.name}</div>${priceText ? `<div class="price">${priceText}</div>` : ""}<div class="svg-container">${svgMarkup}</div></div>`;
       }).join("");
     }
-
-    // For thermal: the page is set in PORTRAIT of the sticker.
-    // The sticker is labelW wide x labelH tall (e.g. 40x20).
-    // The printer feeds paper with width = print head width.
-    // We set @page to labelH x labelW (swapped) so the page is
-    // portrait-oriented relative to the feed direction, then rotate
-    // the content 90° to fill the landscape area.
-    // This ensures content fits even if the driver ignores @page size.
-    const pageW = labelH; // swapped: page width = label height
-    const pageH = labelW; // swapped: page height = label width
 
     const styles = isThermal
       ? `
         @page {
-          size: ${pageW}mm ${pageH}mm;
+          size: ${labelW}mm ${labelH}mm;
           margin: 0;
         }
         * {
@@ -924,50 +932,49 @@ export default function FacturesPage() {
           print-color-adjust: exact;
         }
         html, body {
-          margin: 0;
-          padding: 0;
-          background: #fff;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff;
           font-family: Arial, Helvetica, sans-serif;
-          width: ${pageW}mm;
-          overflow: hidden;
+          width: ${labelW}mm;
+          font-size: 0 !important;
+          line-height: 0 !important;
         }
         .page-container {
-          width: ${pageW}mm;
-          height: ${pageH}mm;
-          overflow: hidden;
-          position: relative;
-          page-break-after: always;
-          break-after: page;
-          page-break-inside: avoid;
-          break-inside: avoid;
-        }
-        .page-container:last-child {
-          page-break-after: auto;
-          break-after: auto;
-        }
-        .rotated-label {
-          /* The label content is laid out as labelW x labelH,
-             then rotated -90deg and repositioned to fit inside
-             the pageW x pageH page container. */
-          position: absolute;
           width: ${labelW}mm;
           height: ${labelH}mm;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%) rotate(-90deg);
-          transform-origin: center center;
+          max-height: ${labelH}mm;
+          overflow: hidden;
+          position: relative;
+          float: left;
+          page-break-inside: avoid;
+          break-inside: avoid;
+          background: #ffffff;
+          font-size: 12px;
+          line-height: 1.2;
+        }
+        .thermal-label-content {
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          padding: 0.5mm 0.8mm 5mm 0.8mm;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: space-between;
-          padding: 0.5mm 1mm;
           overflow: hidden;
-          background: #fff;
+          background: #ffffff;
+        }
+        .thermal-label-content.rotated {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform-origin: center center;
         }
         .name {
           font-weight: 800;
           text-transform: uppercase;
-          color: #000;
+          color: #000000;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -978,7 +985,7 @@ export default function FacturesPage() {
         }
         .price {
           font-weight: 900;
-          color: #000;
+          color: #000000;
           white-space: nowrap;
           width: 100%;
           text-align: center;
@@ -1004,7 +1011,7 @@ export default function FacturesPage() {
         }
         .code {
           font-weight: 700;
-          color: #000;
+          color: #000000;
           letter-spacing: 0.5px;
           line-height: 1;
           flex-shrink: 0;
@@ -1082,19 +1089,7 @@ export default function FacturesPage() {
         }
       `;
 
-    const html = `
-      <!DOCTYPE html>
-      <html lang="fr">
-      <head>
-        <meta charset="UTF-8" />
-        <title>Impression Code-barres - Matjari</title>
-        <style>${styles}</style>
-      </head>
-      <body>
-        ${isThermal ? labelsHtml : `<div class="grid">${labelsHtml}</div>`}
-      </body>
-      </html>
-    `;
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"/><title>Impression Code-barres - Matjari</title><style>${styles}</style></head><body>${isThermal ? labelsHtml : `<div class="grid">${labelsHtml}</div>`}</body></html>`;
 
     try {
       const iframe = document.createElement("iframe");
@@ -1204,6 +1199,14 @@ export default function FacturesPage() {
                       <SelectItem value="custom">Personnalisé (mm)</SelectItem>
                     </SelectContent>
                   </Select>
+                  <button
+                    type="button"
+                    onClick={swapDimensions}
+                    title="Inverser Largeur et Hauteur"
+                    className="h-10 px-3 bg-white border border-slate-300 rounded-xl font-extrabold text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-1 shadow-sm shrink-0"
+                  >
+                    ⇄ Inverser L/H
+                  </button>
                 </div>
 
                 {labelPreset === "custom" && (
@@ -1237,19 +1240,24 @@ export default function FacturesPage() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Disposition Rouleau (Étiquettes/ligne)</label>
-                <div className="flex items-center bg-white p-1 rounded-xl border border-slate-300 shadow-sm gap-1">
-                  {[1, 2, 3, 4].map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => updateColumnsCount(c)}
-                      className={`px-3 py-1 rounded-lg text-xs font-black transition-all ${columnsCount === c ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
-                    >
-                      {c} {c === 1 ? "par ligne" : "par ligne"}
-                    </button>
-                  ))}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Orientation</label>
+                  <div className="flex items-center bg-white p-1 rounded-xl border border-slate-300 shadow-sm gap-1">
+                    {[
+                      { label: "Vertical (0°)", val: 0 },
+                      { label: "Horizontal (90°)", val: 90 },
+                    ].map(r => (
+                      <button
+                        key={r.val}
+                        type="button"
+                        onClick={() => updateThermalRotation(r.val as ThermalRotation)}
+                        className={`px-3 py-1 rounded-lg text-xs font-black transition-all ${thermalRotation === r.val ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1283,27 +1291,40 @@ export default function FacturesPage() {
                   {/* STICKER MODEL PREVIEW CARD */}
                   <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
                     <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
-                      {printMode === "xprinter" ? `Modèle Xprinter (${curW}×${curH}mm ${columnsCount > 1 ? `• ${columnsCount}/ligne` : ""})` : "Modèle étiquette A4"}
+                      {printMode === "xprinter" ? `Modèle Xprinter (${curW}×${curH}mm)` : "Modèle étiquette A4"}
                     </span>
                     {printMode === "xprinter" ? (
                       <div
-                        className="bg-white rounded-xl border-2 border-slate-900 shadow-md p-2 flex flex-col items-center justify-between"
+                        className="bg-white rounded-xl border-2 border-slate-900 shadow-md p-2 flex flex-col items-center justify-between relative overflow-hidden"
                         style={{
-                          width: "210px",
-                          height: `${Math.max(90, Math.round(210 * (curH / curW)))}px`,
+                          width: "160px",
+                          height: `${Math.max(120, Math.round(160 * (curH / curW)))}px`,
                           boxSizing: "border-box"
                         }}
                       >
-                        <span style={{ fontSize: "11px", fontWeight: 800, textTransform: "uppercase", color: "#000000", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0 }}>
-                          {item.name}
-                        </span>
-                        {item.priceSale > 0 && (
-                          <span style={{ fontSize: "12px", fontWeight: 900, color: "#000000", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0, marginTop: "1px" }}>
-                            {formatDZD(item.priceSale)}
+                        <div
+                          className="w-full h-full flex flex-col items-center justify-between"
+                          style={thermalRotation !== 0 ? {
+                            position: "absolute",
+                            top: "50%",
+                            left: "50%",
+                            width: `${Math.max(120, Math.round(160 * (curH / curW)))}px`,
+                            height: "160px",
+                            transform: `translate(-50%, -50%) rotate(${thermalRotation}deg)`,
+                            padding: "6px"
+                          } : { padding: "4px" }}
+                        >
+                          <span style={{ fontSize: "11px", fontWeight: 800, textTransform: "uppercase", color: "#000000", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0 }}>
+                            {item.name}
                           </span>
-                        )}
-                        <div style={{ flex: 1, display: "flex", itemsCenter: "center", justifyCenter: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
-                          <BarcodeSvg value={item.barcode} width={1.4} height={35} />
+                          {item.priceSale > 0 && (
+                            <span style={{ fontSize: "12px", fontWeight: 900, color: "#000000", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0, marginTop: "1px" }}>
+                              {formatDZD(item.priceSale)}
+                            </span>
+                          )}
+                          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
+                            <BarcodeSvg value={item.barcode} width={1.4} height={35} />
+                          </div>
                         </div>
                       </div>
                     ) : (
