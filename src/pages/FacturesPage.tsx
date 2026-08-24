@@ -867,15 +867,8 @@ export default function FacturesPage() {
     setShowBarcodeModal(true);
   };
 
-  // ─── EXECUTE PRINT FROM MODAL ─────────────────────────────────────────────
-  const handleExecutePrintBarcodes = () => {
-    const printList: { name: string; barcode: string; priceSale: number }[] = [];
-    modalBarcodeItems.forEach(item => {
-      for (let i = 0; i < item.copies; i++) {
-        printList.push({ name: item.name, barcode: item.barcode, priceSale: item.priceSale });
-      }
-    });
-
+  // ─── PRINT BARCODE LABELS (shared) ────────────────────────────────────────
+  const printBarcodeLabels = useCallback((printList: { name: string; barcode: string; priceSale: number }[]) => {
     if (printList.length === 0) {
       toast.error("Aucune étiquette sélectionnée pour l'impression");
       return;
@@ -888,13 +881,11 @@ export default function FacturesPage() {
 
     if (isThermal) {
       const isRotated = thermalRotation === 90 || thermalRotation === 270;
-      const contentW = isRotated ? labelH : labelW;
       const contentH = isRotated ? labelW : labelH;
-      const availH = Math.max(10, contentH - 5);
+      const availH = Math.max(10, contentH - 1);
 
       const nameFontSize = Math.max(6, Math.min(10, Math.floor(availH * 0.3)));
       const priceFontSize = Math.max(7, Math.min(11, Math.floor(availH * 0.35)));
-      const codeFontSize = Math.max(5.5, Math.min(9, Math.floor(availH * 0.25)));
       const barcodeSvgHeight = Math.max(18, Math.min(38, Math.floor(availH * 1.0)));
 
       labelsHtml = printList.map(item => {
@@ -905,9 +896,9 @@ export default function FacturesPage() {
           `<div class="svg-container">${svgMarkup}</div>`;
 
         if (thermalRotation === 0) {
-          return `<div class="page-container"><div class="thermal-label-content">${innerContent}</div></div>`;
+          return `<div class="thermal-label">${innerContent}</div>`;
         } else {
-          return `<div class="page-container"><div class="thermal-label-content rotated" style="width:${labelH}mm;height:${labelW}mm;transform:translate(-50%,-50%) rotate(${thermalRotation}deg);">${innerContent}</div></div>`;
+          return `<div class="thermal-label"><div class="thermal-label-inner rotated" style="width:${labelH}mm;height:${labelW}mm;transform:translate(-50%,-50%) rotate(${thermalRotation}deg);">${innerContent}</div></div>`;
         }
       }).join("");
     } else {
@@ -937,39 +928,55 @@ export default function FacturesPage() {
           background: #ffffff;
           font-family: Arial, Helvetica, sans-serif;
           width: ${labelW}mm;
-          font-size: 0 !important;
-          line-height: 0 !important;
         }
-        .page-container {
+        .thermal-label {
           width: ${labelW}mm;
           height: ${labelH}mm;
           max-height: ${labelH}mm;
           overflow: hidden;
           position: relative;
-          float: left;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0.5mm 0.8mm;
           page-break-inside: avoid;
           break-inside: avoid;
+          page-break-after: always;
+          break-after: page;
           background: #ffffff;
           font-size: 12px;
           line-height: 1.2;
         }
-        .thermal-label-content {
-          width: 100%;
-          height: 100%;
-          box-sizing: border-box;
-          padding: 0.5mm 0.8mm 5mm 0.8mm;
+        .thermal-label:last-child {
+          page-break-after: auto;
+          break-after: auto;
+        }
+        .thermal-label-inner.rotated {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform-origin: center center;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: space-between;
           overflow: hidden;
-          background: #ffffff;
+          padding: 0.5mm 0.8mm;
+          box-sizing: border-box;
         }
-        .thermal-label-content.rotated {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform-origin: center center;
+        @media print {
+          html, body {
+            width: ${labelW}mm;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .thermal-label {
+            width: ${labelW}mm;
+            height: ${labelH}mm;
+            max-height: ${labelH}mm;
+            overflow: hidden;
+          }
         }
         .name {
           font-weight: 800;
@@ -1108,6 +1115,13 @@ export default function FacturesPage() {
         iframeDoc.write(html);
         iframeDoc.close();
 
+        const ticketSelector = isThermal ? ".thermal-label" : ".a4-card";
+        const domTicketCount = iframeDoc.querySelectorAll(ticketSelector).length;
+        console.log(`[Print] DOM ticket count: ${domTicketCount}, expected: ${printList.length}`);
+        if (domTicketCount !== printList.length) {
+          console.warn(`[Print] Mismatch: found ${domTicketCount} ticket elements but printList has ${printList.length} items`);
+        }
+
         setTimeout(() => {
           try {
             iframe.contentWindow?.focus();
@@ -1138,6 +1152,21 @@ export default function FacturesPage() {
         setTimeout(() => { win.print(); }, 300);
       }
     }
+  }, [printMode, getThermalDimensions, thermalRotation]);
+
+  const handlePrintSingleBarcode = useCallback((item: { name: string; barcode: string; priceSale: number }) => {
+    printBarcodeLabels([{ name: item.name, barcode: item.barcode, priceSale: item.priceSale }]);
+  }, [printBarcodeLabels]);
+
+  // ─── EXECUTE PRINT FROM MODAL (batch) ─────────────────────────────────────
+  const handleExecutePrintBarcodes = () => {
+    const printList: { name: string; barcode: string; priceSale: number }[] = [];
+    modalBarcodeItems.forEach(item => {
+      for (let i = 0; i < item.copies; i++) {
+        printList.push({ name: item.name, barcode: item.barcode, priceSale: item.priceSale });
+      }
+    });
+    printBarcodeLabels(printList);
   };
 
   // ─── RENDER BARCODE PREVIEW MODAL ─────────────────────────────────────────
@@ -1272,19 +1301,29 @@ export default function FacturesPage() {
                       <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
                       <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "Prix non fixé"}</p>
                     </div>
-                    <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
-                      <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={100}
-                        value={item.copies}
-                        onChange={e => {
-                          const val = Math.max(1, Number(e.target.value) || 1);
-                          setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
-                        }}
-                        className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
-                      />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handlePrintSingleBarcode(item)}
+                        title="Imprimer 1 étiquette"
+                        className="h-9 w-9 flex items-center justify-center rounded-xl bg-slate-900 text-white hover:bg-primary transition-colors shadow-sm"
+                      >
+                        <Printer className="h-4 w-4" />
+                      </button>
+                      <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={item.copies}
+                          onChange={e => {
+                            const val = Math.max(1, Number(e.target.value) || 1);
+                            setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
+                          }}
+                          className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
+                        />
+                      </div>
                     </div>
                   </div>
 
