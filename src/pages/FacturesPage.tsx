@@ -1,8 +1,7 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import {
   Plus, RotateCcw, Search, Eye, ArrowLeft, Package, PackagePlus, X, Trash2, Barcode, Printer, Check
 } from "lucide-react";
-import JsBarcode from "jsbarcode";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,6 +15,13 @@ import { formatDZD, generateId } from "@/lib/store";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { toast } from "sonner";
 import { useAuth } from "@/components/AuthContext";
+import { BarcodeSvg } from "@/components/BarcodeSvg";
+import { printThermalTickets } from "@/lib/printThermalTickets";
+import {
+  TICKET_HEIGHT_MM,
+  TICKET_SAFE_MARGIN_MM,
+  TICKET_WIDTH_MM,
+} from "@/lib/thermalBarcode";
 
 const categoryColorsFallback: Record<string, string> = {
   hauts: "bg-blue-50 text-blue-600 border-blue-100",
@@ -42,62 +48,6 @@ const generateBarcodeValue = (name: string): string => {
   return `${hashPart}${ts}`; // 13 digits total
 };
 
-function BarcodeSvg({ value, width = 1.5, height = 40 }: { value: string; width?: number; height?: number }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  useEffect(() => {
-    if (svgRef.current && value) {
-      try {
-        const barcodeFn = typeof JsBarcode === "function" ? JsBarcode : (JsBarcode as any)?.default;
-        if (barcodeFn) {
-          barcodeFn(svgRef.current, value, {
-            format: "CODE128",
-            width,
-            height,
-            displayValue: false,
-            margin: 0,
-          });
-          const svgEl = svgRef.current;
-          const wAttr = svgEl.getAttribute("width") || "200";
-          const hAttr = svgEl.getAttribute("height") || `${height}`;
-          svgEl.setAttribute("viewBox", `0 0 ${wAttr} ${hAttr}`);
-          svgEl.removeAttribute("width");
-          svgEl.removeAttribute("height");
-          svgEl.setAttribute("style", "width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; object-fit: contain;");
-        }
-      } catch (e) {
-        console.error("Barcode rendering error:", e);
-      }
-    }
-  }, [value, width, height]);
-  return <svg ref={svgRef} style={{ width: "100%", height: "100%", maxWidth: "100%", display: "block" }}></svg>;
-}
-
-const generateBarcodeSvgMarkup = (value: string, width = 1.5, height = 40): string => {
-  if (!value) return "";
-  try {
-    const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    const barcodeFn = typeof JsBarcode === "function" ? JsBarcode : (JsBarcode as any)?.default;
-    if (barcodeFn) {
-      barcodeFn(svgEl, value, {
-        format: "CODE128",
-        width,
-        height,
-        displayValue: false,
-        margin: 0,
-      });
-      const wAttr = svgEl.getAttribute("width") || "200";
-      const hAttr = svgEl.getAttribute("height") || `${height}`;
-      svgEl.setAttribute("viewBox", `0 0 ${wAttr} ${hAttr}`);
-      svgEl.removeAttribute("width");
-      svgEl.removeAttribute("height");
-      svgEl.setAttribute("style", "width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; object-fit: contain;");
-      return svgEl.outerHTML;
-    }
-  } catch (e) {
-    console.error("Barcode SVG generation error:", e);
-  }
-  return `<div style="font-size:10px;color:red;">${value}</div>`;
-};
 
 type View = "list" | "add" | "return";
 type InvoiceFormItem = {
@@ -211,78 +161,6 @@ export default function FacturesPage() {
     priceSale: number;
     copies: number;
   }[]>([]);
-  const [printMode, setPrintMode] = useState<"xprinter" | "a4">("xprinter");
-
-  type ThermalPreset = "40x20" | "50x25" | "50x30" | "38x25" | "30x20" | "58x40" | "20x40" | "custom";
-  const [labelPreset, setLabelPreset] = useState<ThermalPreset>(() => {
-    const saved = localStorage.getItem("matjari_thermal_preset") as ThermalPreset;
-    if (!saved || saved === "20x40") return "40x20";
-    return saved;
-  });
-  const [customWidth, setCustomWidth] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_custom_width")) || 40;
-  });
-  const [customHeight, setCustomHeight] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_custom_height")) || 20;
-  });
-  const [columnsCount, setColumnsCount] = useState<number>(() => {
-    return Number(localStorage.getItem("matjari_thermal_columns")) || 1;
-  });
-  type ThermalRotation = 0 | 90 | 180 | 270;
-  const [thermalRotation, setThermalRotation] = useState<ThermalRotation>(() => {
-    return (Number(localStorage.getItem("matjari_thermal_rotation")) as ThermalRotation) || 0;
-  });
-  const [showBarcodeText, setShowBarcodeText] = useState<boolean>(() => {
-    return localStorage.getItem("matjari_thermal_show_code") === "true";
-  });
-
-  const getThermalDimensions = useCallback(() => {
-    switch (labelPreset) {
-      case "40x20": return { width: 40, height: 20 };
-      case "50x25": return { width: 50, height: 25 };
-      case "50x30": return { width: 50, height: 30 };
-      case "38x25": return { width: 38, height: 25 };
-      case "30x20": return { width: 30, height: 20 };
-      case "58x40": return { width: 58, height: 40 };
-      case "20x40": return { width: 20, height: 40 };
-      case "custom": return { width: customWidth || 40, height: customHeight || 20 };
-      default: return { width: 40, height: 20 };
-    }
-  }, [labelPreset, customWidth, customHeight]);
-
-  const updateLabelPreset = (val: ThermalPreset) => {
-    setLabelPreset(val);
-    localStorage.setItem("matjari_thermal_preset", val);
-  };
-  const updateCustomWidth = (val: number) => {
-    setCustomWidth(val);
-    localStorage.setItem("matjari_thermal_custom_width", val.toString());
-  };
-  const updateCustomHeight = (val: number) => {
-    setCustomHeight(val);
-    localStorage.setItem("matjari_thermal_custom_height", val.toString());
-  };
-  const updateColumnsCount = (val: number) => {
-    setColumnsCount(val);
-    localStorage.setItem("matjari_thermal_columns", val.toString());
-  };
-  const updateThermalRotation = (rot: ThermalRotation) => {
-    setThermalRotation(rot);
-    localStorage.setItem("matjari_thermal_rotation", rot.toString());
-  };
-  const updateShowBarcodeText = (val: boolean) => {
-    setShowBarcodeText(val);
-    localStorage.setItem("matjari_thermal_show_code", val ? "true" : "false");
-  };
-  const swapDimensions = () => {
-    const { width, height } = getThermalDimensions();
-    setLabelPreset("custom");
-    setCustomWidth(height);
-    setCustomHeight(width);
-    localStorage.setItem("matjari_thermal_preset", "custom");
-    localStorage.setItem("matjari_thermal_custom_width", height.toString());
-    localStorage.setItem("matjari_thermal_custom_height", width.toString());
-  };
 
   // Add form state
   const [supplierId, setSupplierId] = useState("");
@@ -867,292 +745,20 @@ export default function FacturesPage() {
     setShowBarcodeModal(true);
   };
 
-  // ─── PRINT BARCODE LABELS (shared) ────────────────────────────────────────
+  // ─── PRINT BARCODE LABELS ─────────────────────────────────────────────────
   const printBarcodeLabels = useCallback((printList: { name: string; barcode: string; priceSale: number }[]) => {
     if (printList.length === 0) {
       toast.error("Aucune étiquette sélectionnée pour l'impression");
       return;
     }
-
-    const isThermal = printMode === "xprinter";
-    const { width: labelW, height: labelH } = getThermalDimensions();
-
-    let labelsHtml = "";
-
-    if (isThermal) {
-      const isRotated = thermalRotation === 90 || thermalRotation === 270;
-      const contentH = isRotated ? labelW : labelH;
-      const availH = Math.max(10, contentH - 1);
-
-      const nameFontSize = Math.max(6, Math.min(10, Math.floor(availH * 0.3)));
-      const priceFontSize = Math.max(7, Math.min(11, Math.floor(availH * 0.35)));
-      const barcodeSvgHeight = Math.max(18, Math.min(38, Math.floor(availH * 1.0)));
-
-      labelsHtml = printList.map(item => {
-        const svgMarkup = generateBarcodeSvgMarkup(item.barcode, 1.2, barcodeSvgHeight);
-        const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
-        const innerContent = `<span class="name" style="font-size:${nameFontSize}px;">${item.name}</span>` +
-          (priceText ? `<span class="price" style="font-size:${priceFontSize}px;">${priceText}</span>` : "") +
-          `<div class="svg-container">${svgMarkup}</div>`;
-
-        if (thermalRotation === 0) {
-          return `<div class="thermal-label">${innerContent}</div>`;
-        } else {
-          return `<div class="thermal-label"><div class="thermal-label-inner rotated" style="width:${labelH}mm;height:${labelW}mm;transform:translate(-50%,-50%) rotate(${thermalRotation}deg);">${innerContent}</div></div>`;
-        }
-      }).join("");
-    } else {
-      labelsHtml = printList.map(item => {
-        const svgMarkup = generateBarcodeSvgMarkup(item.barcode, 1.4, 36);
-        const priceText = item.priceSale > 0 ? `${formatDZD(item.priceSale)}` : "";
-        return `<div class="a4-card"><div class="name">${item.name}</div>${priceText ? `<div class="price">${priceText}</div>` : ""}<div class="svg-container">${svgMarkup}</div></div>`;
-      }).join("");
-    }
-
-    const styles = isThermal
-      ? `
-        @page {
-          size: ${labelW}mm ${labelH}mm;
-          margin: 0;
-        }
-        * {
-          box-sizing: border-box;
-          margin: 0;
-          padding: 0;
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
-        html, body {
-          margin: 0 !important;
-          padding: 0 !important;
-          background: #ffffff;
-          font-family: Arial, Helvetica, sans-serif;
-          width: ${labelW}mm;
-        }
-        .thermal-label {
-          width: ${labelW}mm;
-          height: ${labelH}mm;
-          max-height: ${labelH}mm;
-          overflow: hidden;
-          position: relative;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0.5mm 0.8mm;
-          page-break-inside: avoid;
-          break-inside: avoid;
-          page-break-after: always;
-          break-after: page;
-          background: #ffffff;
-          font-size: 12px;
-          line-height: 1.2;
-        }
-        .thermal-label:last-child {
-          page-break-after: auto;
-          break-after: auto;
-        }
-        .thermal-label-inner.rotated {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform-origin: center center;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: space-between;
-          overflow: hidden;
-          padding: 0.5mm 0.8mm;
-          box-sizing: border-box;
-        }
-        @media print {
-          html, body {
-            width: ${labelW}mm;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          .thermal-label {
-            width: ${labelW}mm;
-            height: ${labelH}mm;
-            max-height: ${labelH}mm;
-            overflow: hidden;
-          }
-        }
-        .name {
-          font-weight: 800;
-          text-transform: uppercase;
-          color: #000000;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          width: 100%;
-          text-align: center;
-          line-height: 1.15;
-          flex-shrink: 0;
-        }
-        .price {
-          font-weight: 900;
-          color: #000000;
-          white-space: nowrap;
-          width: 100%;
-          text-align: center;
-          line-height: 1.15;
-          flex-shrink: 0;
-        }
-        .svg-container {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          width: 100%;
-          flex: 1;
-          min-height: 0;
-          overflow: hidden;
-        }
-        .svg-container svg {
-          width: 100%;
-          height: 100%;
-          max-width: 100%;
-          max-height: 100%;
-          display: block;
-          object-fit: contain;
-        }
-        .code {
-          font-weight: 700;
-          color: #000000;
-          letter-spacing: 0.5px;
-          line-height: 1;
-          flex-shrink: 0;
-          text-align: center;
-          width: 100%;
-        }
-      `
-      : `
-        @page {
-          size: A4;
-          margin: 8mm;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          font-family: system-ui, -apple-system, sans-serif;
-          background: #fff;
-          padding: 5mm;
-        }
-        .grid {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 3mm;
-        }
-        .a4-card {
-          width: 48mm;
-          height: 30mm;
-          background: #fff;
-          border: 1px dashed #cbd5e1;
-          border-radius: 6px;
-          padding: 2mm;
-          text-align: center;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          page-break-inside: avoid;
-          break-inside: avoid;
-        }
-        .name {
-          font-size: 9.5px;
-          font-weight: 800;
-          text-transform: uppercase;
-          color: #0f172a;
-          max-width: 44mm;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .price {
-          font-size: 10px;
-          font-weight: 900;
-          color: #10b981;
-          margin-top: 1px;
-        }
-        .svg-container {
-          margin-top: 1px;
-          display: flex;
-          justify-content: center;
-        }
-        .svg-container svg {
-          max-width: 44mm;
-          height: auto;
-          display: block;
-        }
-        .code {
-          font-size: 8.5px;
-          font-weight: 700;
-          color: #475569;
-          letter-spacing: 0.8px;
-          margin-top: 1px;
-        }
-        @media print {
-          body { padding: 0; }
-          .a4-card { border: 1px solid #000; }
-        }
-      `;
-
-    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"/><title>Impression Code-barres - Matjari</title><style>${styles}</style></head><body>${isThermal ? labelsHtml : `<div class="grid">${labelsHtml}</div>`}</body></html>`;
-
-    try {
-      const iframe = document.createElement("iframe");
-      iframe.style.position = "fixed";
-      iframe.style.right = "0";
-      iframe.style.bottom = "0";
-      iframe.style.width = "0";
-      iframe.style.height = "0";
-      iframe.style.border = "0";
-      iframe.style.visibility = "hidden";
-      document.body.appendChild(iframe);
-
-      const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;
-      if (iframeDoc) {
-        iframeDoc.open();
-        iframeDoc.write(html);
-        iframeDoc.close();
-
-        const ticketSelector = isThermal ? ".thermal-label" : ".a4-card";
-        const domTicketCount = iframeDoc.querySelectorAll(ticketSelector).length;
-        console.log(`[Print] DOM ticket count: ${domTicketCount}, expected: ${printList.length}`);
-        if (domTicketCount !== printList.length) {
-          console.warn(`[Print] Mismatch: found ${domTicketCount} ticket elements but printList has ${printList.length} items`);
-        }
-
-        setTimeout(() => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-          } catch (e) {
-            console.error("Iframe print error, trying popup window:", e);
-            const win = window.open("", "_blank");
-            if (win) {
-              win.document.write(html);
-              win.document.close();
-              setTimeout(() => { win.print(); }, 300);
-            }
-          } finally {
-            setTimeout(() => {
-              if (document.body.contains(iframe)) {
-                document.body.removeChild(iframe);
-              }
-            }, 2000);
-          }
-        }, 300);
-      }
-    } catch (err) {
-      console.error("Print execution failed:", err);
-      const win = window.open("", "_blank");
-      if (win) {
-        win.document.write(html);
-        win.document.close();
-        setTimeout(() => { win.print(); }, 300);
-      }
-    }
-  }, [printMode, getThermalDimensions, thermalRotation]);
+    printThermalTickets(
+      printList.map(item => ({
+        name: item.name,
+        price: item.priceSale,
+        barcode: item.barcode,
+      }))
+    );
+  }, []);
 
   const handlePrintSingleBarcode = useCallback((item: { name: string; barcode: string; priceSale: number }) => {
     printBarcodeLabels([{ name: item.name, barcode: item.barcode, priceSale: item.priceSale }]);
@@ -1171,8 +777,6 @@ export default function FacturesPage() {
 
   // ─── RENDER BARCODE PREVIEW MODAL ─────────────────────────────────────────
   const renderBarcodeModal = () => {
-    const { width: curW, height: curH } = getThermalDimensions();
-
     return (
       <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
         <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
@@ -1183,114 +787,19 @@ export default function FacturesPage() {
                 Modèle & Aperçu des Étiquettes Code-barres
               </DialogTitle>
               <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
-                Consultez le rendu visuel des étiquettes et ajustez les réglages avant impression
+                Aperçu du format automatique sécurisé avant impression
               </p>
             </div>
 
-            {/* Mode Selection */}
-            <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 self-start md:self-auto">
-              <button
-                type="button"
-                onClick={() => setPrintMode("xprinter")}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "xprinter" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
-              >
-                <Printer className="h-4 w-4" />
-                Xprinter XP-420B (Thermique)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintMode("a4")}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${printMode === "a4" ? "bg-slate-900 text-white shadow-md" : "text-slate-600 hover:text-slate-900"}`}
-              >
-                📄 Planche A4
-              </button>
+            <div className="flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-xs font-black text-white shadow-md">
+              <Printer className="h-4 w-4" />
+              Xprinter XP-420B · 40 × 20 mm
             </div>
           </DialogHeader>
 
-          {/* Thermal Label Settings Bar */}
-          {printMode === "xprinter" && (
-            <div className="bg-slate-100/80 px-8 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Format Étiquette</label>
-                  <Select value={labelPreset} onValueChange={(v: ThermalPreset) => updateLabelPreset(v)}>
-                    <SelectTrigger className="h-10 bg-white border-slate-300 rounded-xl font-extrabold text-xs px-3 min-w-[170px] shadow-sm">
-                      <SelectValue placeholder="Format" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl font-bold text-xs">
-                      <SelectItem value="20x40">20 x 40 mm (Standard Vertical)</SelectItem>
-                      <SelectItem value="40x20">40 x 20 mm (Standard Horizontal)</SelectItem>
-                      <SelectItem value="50x25">50 x 25 mm (Moyen - Courant)</SelectItem>
-                      <SelectItem value="50x30">50 x 30 mm (Standard Vêtement)</SelectItem>
-                      <SelectItem value="38x25">38 x 25 mm (Accessoires/Bijoux)</SelectItem>
-                      <SelectItem value="30x20">30 x 20 mm (Ultra-Compact)</SelectItem>
-                      <SelectItem value="58x40">58 x 40 mm (Grand Format)</SelectItem>
-                      <SelectItem value="custom">Personnalisé (mm)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <button
-                    type="button"
-                    onClick={swapDimensions}
-                    title="Inverser Largeur et Hauteur"
-                    className="h-10 px-3 bg-white border border-slate-300 rounded-xl font-extrabold text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-1 shadow-sm shrink-0"
-                  >
-                    ⇄ Inverser L/H
-                  </button>
-                </div>
-
-                {labelPreset === "custom" && (
-                  <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-xl border border-slate-300 shadow-sm mt-4 md:mt-0">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] font-black uppercase text-slate-400">L:</span>
-                      <input
-                        type="number"
-                        min={10}
-                        max={150}
-                        value={customWidth}
-                        onChange={e => updateCustomWidth(Number(e.target.value) || 40)}
-                        className="w-12 text-center font-black text-xs h-7 border rounded outline-none"
-                      />
-                      <span className="text-[10px] text-slate-400 font-bold">mm</span>
-                    </div>
-                    <span className="text-slate-300 font-bold">×</span>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] font-black uppercase text-slate-400">H:</span>
-                      <input
-                        type="number"
-                        min={10}
-                        max={150}
-                        value={customHeight}
-                        onChange={e => updateCustomHeight(Number(e.target.value) || 20)}
-                        className="w-12 text-center font-black text-xs h-7 border rounded outline-none"
-                      />
-                      <span className="text-[10px] text-slate-400 font-bold">mm</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Orientation</label>
-                  <div className="flex items-center bg-white p-1 rounded-xl border border-slate-300 shadow-sm gap-1">
-                    {[
-                      { label: "Vertical (0°)", val: 0 },
-                      { label: "Horizontal (90°)", val: 90 },
-                    ].map(r => (
-                      <button
-                        key={r.val}
-                        type="button"
-                        onClick={() => updateThermalRotation(r.val as ThermalRotation)}
-                        className={`px-3 py-1 rounded-lg text-xs font-black transition-all ${thermalRotation === r.val ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
-                      >
-                        {r.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <div className="border-b border-slate-200 bg-slate-100/80 px-8 py-3 text-center text-xs font-bold text-slate-600">
+            Format automatique : {TICKET_WIDTH_MM} × {TICKET_HEIGHT_MM} mm · marge de sécurité de {TICKET_SAFE_MARGIN_MM} mm sur chaque bord
+          </div>
 
           <div className="p-8 max-h-[55vh] overflow-y-auto space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1330,29 +839,13 @@ export default function FacturesPage() {
                   {/* STICKER MODEL PREVIEW CARD */}
                   <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
                     <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
-                      {printMode === "xprinter" ? `Modèle Xprinter (${curW}×${curH}mm)` : "Modèle étiquette A4"}
+                      Modèle Xprinter · 40 × 20 mm
                     </span>
-                    {printMode === "xprinter" ? (
-                      <div
-                        className="bg-white rounded-xl border-2 border-slate-900 shadow-md p-2 flex flex-col items-center justify-between relative overflow-hidden"
-                        style={{
-                          width: "160px",
-                          height: `${Math.max(120, Math.round(160 * (curH / curW)))}px`,
-                          boxSizing: "border-box"
-                        }}
-                      >
-                        <div
-                          className="w-full h-full flex flex-col items-center justify-between"
-                          style={thermalRotation !== 0 ? {
-                            position: "absolute",
-                            top: "50%",
-                            left: "50%",
-                            width: `${Math.max(120, Math.round(160 * (curH / curW)))}px`,
-                            height: "160px",
-                            transform: `translate(-50%, -50%) rotate(${thermalRotation}deg)`,
-                            padding: "6px"
-                          } : { padding: "4px" }}
-                        >
+                    <div
+                      className="bg-white rounded-xl border-2 border-slate-900 shadow-md flex flex-col items-center justify-between relative overflow-hidden"
+                      style={{ width: "200px", height: "100px", boxSizing: "border-box", padding: "10px" }}
+                    >
+                      <div className="w-full h-full flex flex-col items-center justify-between">
                           <span style={{ fontSize: "11px", fontWeight: 800, textTransform: "uppercase", color: "#000000", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0 }}>
                             {item.name}
                           </span>
@@ -1364,17 +857,8 @@ export default function FacturesPage() {
                           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
                             <BarcodeSvg value={item.barcode} width={1.4} height={35} />
                           </div>
-                        </div>
                       </div>
-                    ) : (
-                      <div className="bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center min-w-[200px]">
-                        <span className="text-xs font-black text-slate-900 uppercase max-w-[170px] truncate mb-1">{item.name}</span>
-                        {item.priceSale > 0 && <span className="text-xs font-extrabold text-primary mb-1">{formatDZD(item.priceSale)}</span>}
-                        <div className="h-10 w-full flex items-center justify-center">
-                          <BarcodeSvg value={item.barcode} width={1.4} height={35} />
-                        </div>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 </div>
               ))}
