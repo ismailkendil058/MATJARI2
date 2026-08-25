@@ -130,7 +130,8 @@ async function createTables(database: Database) {
         clientId TEXT NOT NULL,
         amount REAL NOT NULL,
         date TEXT NOT NULL,
-        note TEXT
+        note TEXT,
+        addedBy TEXT
       )
     `);
 
@@ -395,6 +396,10 @@ export async function initDb() {
 
                 try {
                     await database.execute("ALTER TABLE sales ADD COLUMN originalSaleId TEXT");
+                } catch (e) { /* ignore if already exists */ }
+
+                try {
+                    await database.execute("ALTER TABLE payments ADD COLUMN addedBy TEXT");
                 } catch (e) { /* ignore if already exists */ }
 
                 await migrateLegacyDatabase(database);
@@ -767,8 +772,8 @@ export async function addPayment(payment: Payment) {
         const database = await initDb();
         await runExecute(
             database,
-            "INSERT OR REPLACE INTO payments (id, clientId, amount, date, note) VALUES ($1, $2, $3, $4, $5)",
-            [payment.id, payment.clientId, payment.amount, payment.date, payment.note || null]
+            "INSERT OR REPLACE INTO payments (id, clientId, amount, date, note, addedBy) VALUES ($1, $2, $3, $4, $5, $6)",
+            [payment.id, payment.clientId, payment.amount, payment.date, payment.note || null, payment.addedBy || null]
         );
 
         await updateClientCredit(payment.clientId, -payment.amount);

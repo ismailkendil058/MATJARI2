@@ -4,13 +4,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getClients, addPayment, getSalesByClient, getPaymentsByClient } from "@/lib/db";
-import { Client, Sale, Payment } from "@/lib/types";
+import { Client, Sale, Payment, CartItem } from "@/lib/types";
 import { formatDZD, generateId } from "@/lib/store";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useAuth } from "@/components/AuthContext";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
 export default function CreditPage() {
+  const { user } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export default function CreditPage() {
   const [search, setSearch] = useState("");
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [historyClient, setHistoryClient] = useState<Client | null>(null);
-  const [history, setHistory] = useState<{ date: string; type: 'sale' | 'payment'; amount: number; note?: string; id: string }[]>([]);
+  const [history, setHistory] = useState<{ date: string; type: 'sale' | 'payment'; amount: number; note?: string; id: string; addedBy?: string; items?: CartItem[] }[]>([]);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentNote, setPaymentNote] = useState("");
   const isMobile = useIsMobile();
@@ -54,14 +56,17 @@ export default function CreditPage() {
               date: s.date,
               type: 'sale' as const,
               amount: s.creditAmount,
-              note: `Facture #${s.id}`
+              note: `Facture #${s.id}`,
+              addedBy: s.username,
+              items: s.items
             })),
             ...payments.map(p => ({
               id: p.id,
               date: p.date,
               type: 'payment' as const,
               amount: p.amount,
-              note: p.note
+              note: p.note,
+              addedBy: p.addedBy
             }))
           ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -90,7 +95,8 @@ export default function CreditPage() {
         clientId: selectedClient.id,
         amount: amount,
         date: new Date().toISOString(),
-        note: paymentNote.trim() || undefined
+        note: paymentNote.trim() || undefined,
+        addedBy: user?.username || undefined
       });
 
       // Refresh state
@@ -197,6 +203,45 @@ export default function CreditPage() {
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto p-10 space-y-6 custom-scrollbar">
+            {history.filter(item => item.type === 'sale').length > 0 && (
+              <div className="space-y-4">
+                <h4 className="text-xl font-black text-[#3f5362] flex items-center gap-3">
+                  <ArrowUpCircle className="h-6 w-6 text-red-500" />
+                  Crédits Effectués
+                </h4>
+                <div className="space-y-3">
+                  {history.filter(item => item.type === 'sale').map((item) => (
+                    <div key={`credit-${item.id}`} className="bg-red-50/50 rounded-2xl p-5 border border-red-100">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="font-black text-lg text-[#3f5362]">
+                          {item.addedBy ? `Par: ${item.addedBy}` : 'Utilisateur inconnu'}
+                        </p>
+                        <p className={`text-xl font-black text-red-500`}>
+                          +{formatDZD(item.amount)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 text-gray-500 font-bold text-sm mb-2">
+                        <Calendar className="h-4 w-4" />
+                        {format(new Date(item.date), "dd MMMM yyyy 'à' HH:mm", { locale: fr })}
+                      </div>
+                      {item.items && item.items.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-red-100">
+                          <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2">Produits:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {item.items.map((cartItem, idx) => (
+                              <span key={idx} className="bg-white px-3 py-1 rounded-lg text-sm font-bold text-gray-700 border border-red-100">
+                                {cartItem.product.name} {cartItem.quantity > 1 && `(x${cartItem.quantity})`}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-between items-center mb-4">
               <h4 className="text-xl font-black text-[#3f5362] flex items-center gap-3">
                 <History className="h-6 w-6 text-primary" />
@@ -230,18 +275,24 @@ export default function CreditPage() {
                         <p className="font-black text-xl text-[#3f5362]">
                           {item.type === 'sale' ? 'Crédit (Achat)' : 'Paiement (Versement)'}
                         </p>
-                        <div className="flex items-center gap-4 text-gray-400 font-bold">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-4 w-4" />
-                            {format(new Date(item.date), "dd MMMM yyyy 'à' HH:mm", { locale: fr })}
-                          </span>
-                          {item.note && (
-                            <>
-                              <div className="w-1 h-1 rounded-full bg-gray-200" />
-                              <span>{item.note}</span>
-                            </>
-                          )}
-                        </div>
+                         <div className="flex items-center gap-4 text-gray-400 font-bold">
+                           <span className="flex items-center gap-1">
+                             <Calendar className="h-4 w-4" />
+                             {format(new Date(item.date), "dd MMMM yyyy 'à' HH:mm", { locale: fr })}
+                           </span>
+                           {item.note && (
+                             <>
+                               <div className="w-1 h-1 rounded-full bg-gray-200" />
+                               <span>{item.note}</span>
+                             </>
+                           )}
+                           {item.addedBy && (
+                             <>
+                               <div className="w-1 h-1 rounded-full bg-gray-200" />
+                               <span className="text-primary">Par: {item.addedBy}</span>
+                             </>
+                           )}
+                         </div>
                       </div>
                     </div>
                     <div className="text-right">

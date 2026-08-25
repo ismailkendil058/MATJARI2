@@ -90,6 +90,23 @@ export default function InventairePage() {
     });
   }, [products, search, catFilter]);
 
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const aStock = a.stock || 0;
+      const bStock = b.stock || 0;
+
+      if (aStock === 0 && bStock !== 0) return -1;
+      if (aStock !== 0 && bStock === 0) return 1;
+
+      const aIsLow = aStock >= 1 && aStock <= 3;
+      const bIsLow = bStock >= 1 && bStock <= 3;
+      if (aIsLow && !bIsLow) return -1;
+      if (!aIsLow && bIsLow) return 1;
+
+      return 0;
+    });
+  }, [filtered]);
+
   const { totalBuy, totalSale } = useMemo(() => {
     return products.reduce(
       (acc, p) => {
@@ -169,7 +186,7 @@ export default function InventairePage() {
                 Aucun produit ne correspond aux filtres.
               </div>
             ) : (
-              filtered.map(product => {
+              sorted.map(product => {
                 const category = dbCategories.find(item => item.key === product.category);
                 return (
                   <article
@@ -188,7 +205,13 @@ export default function InventairePage() {
                         </div>
                       </div>
                       <div className="flex flex-col gap-2">
-                        <div className={`rounded-2xl px-3 py-2 text-center ${product.stock <= 5 ? "bg-red-50 text-red-500" : "bg-[#ecf8f0] text-[#41b86d]"}`}>
+                        <div className={`rounded-2xl px-3 py-2 text-center ${
+                          product.stock === 0 
+                            ? "bg-red-50 text-red-500" 
+                            : product.stock >= 1 && product.stock <= 3 
+                              ? "bg-orange-50 text-orange-500" 
+                              : "bg-[#ecf8f0] text-[#41b86d]"
+                        }`}>
                           <p className="text-[10px] font-bold uppercase tracking-[0.2em]">Stock</p>
                           <p className="text-lg font-black">{product.stock}</p>
                         </div>
@@ -389,7 +412,7 @@ export default function InventairePage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(p => {
+            {sorted.map(p => {
               const cat = dbCategories.find(c => c.key === p.category);
               const hasSizes = (cat?.hasPointure || cat?.hasTailles) || (p.sizeStock && Object.keys(p.sizeStock).length > 0);
               const hasCustom = cat?.hasVentePersonnalisee || customCards.some(c => c.baseProductId === p.id);
@@ -423,7 +446,13 @@ export default function InventairePage() {
                     <span className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs font-black uppercase tracking-widest">{cat?.label || p.category}</span>
                   </td>
                   <td className="px-8 py-6 text-center">
-                    <span className={`px-4 py-2 rounded-xl text-xl font-black ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100/50 text-green-700'}`}>{p.stock}</span>
+                    <span className={`px-4 py-2 rounded-xl text-xl font-black ${
+                      p.stock === 0 
+                        ? 'bg-red-100 text-red-600' 
+                        : p.stock >= 1 && p.stock <= 3 
+                          ? 'bg-orange-100 text-orange-600' 
+                          : 'bg-green-100/50 text-green-700'
+                    }`}>{p.stock}</span>
                   </td>
                   <td className="px-8 py-6 text-center font-bold text-xl text-gray-600">{formatDZD(p.priceBuy)}</td>
                   <td className="px-8 py-6 text-center font-black text-2xl text-primary">{formatDZD(p.priceSale)}</td>
