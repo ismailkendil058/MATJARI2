@@ -184,8 +184,9 @@ export default function FacturesPage() {
   const [itemCategory, setItemCategory] = useState<CategoryType>("hauts");
   const [itemBarcode, setItemBarcode] = useState("");
   const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-  const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45"];
+  const SHOE_SIZES = ["37", "38", "39", "40", "41", "42", "43", "44", "45"];
   const [sizeQtys, setSizeQtys] = useState<Record<string, number>>({});
+  const [showSizeModal, setShowSizeModal] = useState(false);
 
 
 
@@ -775,6 +776,99 @@ export default function FacturesPage() {
     printBarcodeLabels(printList);
   };
 
+  // ─── RENDER SIZE SELECTION MODAL ──────────────────────────────────────────
+  const renderSizeModal = () => {
+    const activeSizes = isPointureCategory(itemCategory) ? SHOE_SIZES : SHIRT_SIZES;
+    const totalSelected = Object.values(sizeQtys).reduce((a, b) => a + (b || 0), 0);
+    return (
+      <Dialog open={showSizeModal} onOpenChange={setShowSizeModal}>
+        <DialogContent className="max-w-5xl rounded-[2rem] p-0 overflow-hidden bg-white border-2 shadow-2xl">
+          <DialogHeader className="p-8 pb-6 bg-gradient-to-r from-slate-50 to-slate-100/50 border-b">
+            <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                <Package className="h-5 w-5" />
+              </div>
+              {isPointureCategory(itemCategory) ? "Sélection des Pointures" : "Sélection des Tailles"}
+            </DialogTitle>
+            <p className="text-xs font-bold text-slate-500 mt-2 uppercase tracking-wider pl-[52px]">
+              Renseignez les quantités par {isPointureCategory(itemCategory) ? "pointure" : "taille"}
+            </p>
+          </DialogHeader>
+
+          <div className="p-8 max-h-[60vh] overflow-y-auto">
+            <div className="flex flex-nowrap items-end gap-4 overflow-x-auto pb-2">
+              {activeSizes.map(size => {
+                const qty = sizeQtys[size] || 0;
+                const isActive = qty > 0;
+                return (
+                  <div key={size} className="space-y-2 min-w-[80px]">
+                    <div className={`text-center py-2 px-3 rounded-xl font-black text-sm transition-all ${
+                      isActive
+                        ? "bg-primary text-white shadow-lg shadow-primary/30 scale-105"
+                        : "bg-slate-100 text-slate-600"
+                    }`}>
+                      {size}
+                    </div>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={sizeQtys[size] || ""}
+                      onChange={e => {
+                        const val = e.target.value === "" ? 0 : Math.max(0, Number(e.target.value));
+                        setSizeQtys(prev => ({ ...prev, [size]: val }));
+                      }}
+                      placeholder="Qté"
+                      className={`h-14 text-center font-black text-xl border-2 p-0 rounded-2xl transition-all ${
+                        isActive
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-slate-200 bg-white text-slate-900"
+                      }`}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="p-6 bg-gradient-to-r from-slate-50 to-slate-100/30 border-t flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="text-xs font-black uppercase text-slate-600 tracking-wider">
+                Total sélectionné :
+              </div>
+              <div className={`text-lg font-black px-3 py-1 rounded-lg ${
+                totalSelected > 0
+                  ? "bg-primary text-white"
+                  : "bg-slate-200 text-slate-500"
+              }`}>
+                {totalSelected}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSizeQtys({});
+                  setShowSizeModal(false);
+                }}
+                className="rounded-xl font-bold px-6 hover:bg-red-50 hover:text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Effacer
+              </Button>
+              <Button
+                onClick={() => setShowSizeModal(false)}
+                className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
+              >
+                <Check className="h-5 w-5" />
+                Confirmer
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
   // ─── RENDER BARCODE PREVIEW MODAL ─────────────────────────────────────────
   const renderBarcodeModal = () => {
     return (
@@ -1042,21 +1136,21 @@ export default function FacturesPage() {
                 </Select>
               </div>
 
-              {/* Multi-Size Quantities (Clothing or Shoes) */}
+              {/* Sizes Button / Qty Input */}
               {SIZE_CATEGORIES.includes(itemCategory) ? (
-                <div className="flex gap-3">
-                  {(isPointureCategory(itemCategory) ? SHOE_SIZES : SHIRT_SIZES).map(size => (
-                    <div key={size} className={isPointureCategory(itemCategory) ? "w-14 space-y-3 text-center" : "w-16 space-y-3 text-center"}>
-                      <label className="text-[11px] font-black uppercase text-slate-400 tracking-widest block">{size}</label>
-                      <Input
-                        type="number"
-                        value={sizeQtys[size] || ""}
-                        onChange={e => setSizeQtys(prev => ({ ...prev, [size]: e.target.value === "" ? 0 : Number(e.target.value) }))}
-                        placeholder={size}
-                        className="h-16 text-center font-black text-xl border-slate-200 bg-white p-0 rounded-2xl shadow-none"
-                      />
-                    </div>
-                  ))}
+                <div className="w-48 space-y-3">
+                  <label className="text-[11px] font-black uppercase text-slate-400 tracking-widest pl-1 block">Tailles</label>
+                  <Button
+                    type="button"
+                    onClick={() => setShowSizeModal(true)}
+                    className="h-16 w-full border-slate-200 bg-white hover:bg-slate-50 text-slate-900 font-black text-sm rounded-2xl shadow-none flex items-center justify-center gap-2"
+                    variant="outline"
+                  >
+                    <Package className="h-5 w-5" />
+                    {Object.entries(sizeQtys).filter(([_, qty]) => qty > 0).length > 0
+                      ? `${Object.entries(sizeQtys).filter(([_, qty]) => qty > 0).length} taille(s)`
+                      : "Choisir tailles"}
+                  </Button>
                 </div>
               ) : (
                 <div className="w-32 space-y-3">
@@ -1242,6 +1336,7 @@ export default function FacturesPage() {
 
         {/* BARCODE PREVIEW & MODEL MODAL inside view === add */}
         {renderBarcodeModal()}
+        {renderSizeModal()}
       </div>
     );
   }
