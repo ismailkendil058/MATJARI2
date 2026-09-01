@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import {
-  Search, Plus, Minus, Trash2, Package, Printer, Calendar, Tag
+  Search, Plus, Minus, Trash2, Package, Printer, Calendar, Tag, X
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -1226,9 +1226,19 @@ export default function CaissePage() {
           </div>
 
           {reduction > 0 && (
-            <div className="flex justify-between items-center text-sm">
-              <span className="font-bold text-muted-foreground">Réduction appliquée</span>
-              <span className="font-bold tracking-tight text-red-500">-{formatDZD(reduction)}</span>
+            <div className="flex justify-between items-center text-sm bg-red-50/60 px-3 py-2 rounded-xl border border-red-100">
+              <span className="font-bold text-red-700">Réduction appliquée</span>
+              <div className="flex items-center gap-2">
+                <span className="font-black tracking-tight text-red-600">-{formatDZD(reduction)}</span>
+                <button
+                  type="button"
+                  onClick={() => { setReduction(0); setTempReduction(""); }}
+                  className="h-6 w-6 rounded-full bg-red-100 text-red-600 hover:bg-red-600 hover:text-white transition-all flex items-center justify-center cursor-pointer shrink-0"
+                  title="Annuler la réduction"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           )}
 

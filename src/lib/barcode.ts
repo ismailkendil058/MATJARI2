@@ -37,6 +37,16 @@ export function findProductByBarcode(products: Product[], barcode: unknown): Pro
   );
 }
 
+export function isBarcodeUnique(products: Product[], barcode: unknown, excludeProductId?: string): boolean {
+  const norm = normalizeBarcode(barcode);
+  if (!norm) return true;
+
+  const existing = findProductByBarcode(products, norm);
+  if (!existing) return true;
+  if (excludeProductId && existing.id === excludeProductId) return true;
+  return false;
+}
+
 export function generateBarcodeValue(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {

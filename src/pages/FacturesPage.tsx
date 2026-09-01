@@ -209,6 +209,45 @@ export default function FacturesPage() {
     return products.filter(p => p.name.toLowerCase().includes(itemName.toLowerCase())).slice(0, 5);
   }, [products, itemName, selectedProduct]);
 
+  const handleBarcodeEntered = useCallback((val: string) => {
+    setItemBarcode(val);
+    const normalized = normalizeBarcode(val);
+    if (!normalized) return;
+
+    const found = findProductByBarcode(products, normalized);
+    if (found) {
+      setSelectedProduct(found);
+      setItemName(found.name);
+      setItemBuy(found.priceBuy);
+      setItemSale(found.priceSale);
+      setItemCategory(found.category);
+      setItemBarcode(found.barcode || normalized);
+      setShowSuggestions(false);
+      toast.success(`Produit trouvé: ${found.name}`);
+    }
+  }, [products]);
+
+  const handleItemNameChange = useCallback((val: string) => {
+    setItemName(val);
+    setShowSuggestions(true);
+    if (selectedProduct) setSelectedProduct(null);
+
+    const normalized = normalizeBarcode(val);
+    if (normalized && normalized.length >= 4) {
+      const found = findProductByBarcode(products, normalized);
+      if (found) {
+        setSelectedProduct(found);
+        setItemName(found.name);
+        setItemBuy(found.priceBuy);
+        setItemSale(found.priceSale);
+        setItemCategory(found.category);
+        setItemBarcode(found.barcode || normalized);
+        setShowSuggestions(false);
+        toast.success(`Produit trouvé: ${found.name}`);
+      }
+    }
+  }, [products, selectedProduct]);
+
   const handleValidateItem = async () => {
     if (!itemName) return;
     const isNew = !selectedProduct;
@@ -216,25 +255,32 @@ export default function FacturesPage() {
     let productId = selectedProduct ? selectedProduct.id : `new-${Date.now()}`;
 
     if (isNew && itemBarcode) {
-      // create a new product record including barcode
-      const newProd: Product = {
-        id: generateId(),
-        name: itemName.trim(),
-        nameAr: "",
-        category: itemCategory,
-        priceSale: Number(itemSale) || 0,
-        priceBuy: Number(itemBuy) || 0,
-        stock: 0,
-        unit: "unité",
-        barcode: normalizeBarcode(itemBarcode) || undefined,
-      };
+      const norm = normalizeBarcode(itemBarcode);
+      const existing = norm ? findProductByBarcode(products, norm) : undefined;
+      if (existing) {
+        toast.info(`Le code-barres est associé au produit existant : "${existing.name}"`);
+        productId = existing.id;
+      } else {
+        // create a new product record including barcode
+        const newProd: Product = {
+          id: generateId(),
+          name: itemName.trim(),
+          nameAr: "",
+          category: itemCategory,
+          priceSale: Number(itemSale) || 0,
+          priceBuy: Number(itemBuy) || 0,
+          stock: 0,
+          unit: "unité",
+          barcode: norm || undefined,
+        };
 
-      try {
-        await saveProducts([...(products || []), newProd]);
-        setProducts(prev => [...prev, newProd]);
-        productId = newProd.id;
-      } catch (e) {
-        console.error("Failed saving new product with barcode:", e);
+        try {
+          await saveProducts([...(products || []), newProd]);
+          setProducts(prev => [...prev, newProd]);
+          productId = newProd.id;
+        } catch (e) {
+          console.error("Failed saving new product with barcode:", e);
+        }
       }
     }
 
@@ -1080,10 +1126,7 @@ export default function FacturesPage() {
                   <Input
                     placeholder="Nom du produit..."
                     value={itemName}
-                    onChange={e => {
-                      setItemName(e.target.value);
-                      setShowSuggestions(true);
-                    }}
+                    onChange={e => handleItemNameChange(e.target.value)}
                     onFocus={() => setShowSuggestions(true)}
                     className="h-16 border-slate-200 rounded-2xl font-black text-xl focus-visible:ring-slate-100 flex-1 px-6 shadow-none"
                   />
@@ -1091,7 +1134,13 @@ export default function FacturesPage() {
                     <Input
                       placeholder="Code-barre (opt.)"
                       value={itemBarcode}
-                      onChange={e => setItemBarcode(e.target.value)}
+                      onChange={e => handleBarcodeEntered(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleBarcodeEntered(e.currentTarget.value);
+                        }
+                      }}
                       className="h-16 border-slate-200 rounded-2xl text-base font-bold pl-5 pr-12 shadow-none w-full"
                     />
                     <button

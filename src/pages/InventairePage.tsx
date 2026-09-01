@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { getProducts, updateProduct, deleteProduct, getCategories, getCustomCards } from "@/lib/db";
 import { Product, Category, CustomSaleCard } from "@/lib/types";
 import { formatDZD } from "@/lib/store";
-import { normalizeBarcode, generateBarcodeValue } from "@/lib/barcode";
+import { normalizeBarcode, generateBarcodeValue, findProductByBarcode, isBarcodeUnique } from "@/lib/barcode";
 import { BarcodeSvg } from "@/components/BarcodeSvg";
 import { printThermalTickets } from "@/lib/printThermalTickets";
 import { TICKET_HEIGHT_MM, TICKET_SAFE_MARGIN_MM, TICKET_WIDTH_MM } from "@/lib/thermalBarcode";
@@ -105,6 +105,16 @@ export default function InventairePage() {
 
   const handleSaveEdit = async () => {
     if (!editingProduct) return;
+    if (editingProduct.barcode) {
+      const norm = normalizeBarcode(editingProduct.barcode);
+      if (norm) {
+        const existing = findProductByBarcode(products, norm);
+        if (existing && existing.id !== editingProduct.id) {
+          toast.error(`Code-barres (${norm}) déjà utilisé par le produit : "${existing.name}"`);
+          return;
+        }
+      }
+    }
     try {
       await updateProduct(editingProduct);
       setProducts(prev => prev.map(p => p.id === editingProduct.id ? editingProduct : p));
