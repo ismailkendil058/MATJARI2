@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import {
-  Search, Plus, Minus, Trash2, Package, Printer, Calendar
+  Search, Plus, Minus, Trash2, Package, Printer, Calendar, Tag
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -92,6 +92,7 @@ export default function CaissePage() {
   const [retourDateFilter, setRetourDateFilter] = useState(getTodayString());
   const [selectedSaleForReturn, setSelectedSaleForReturn] = useState<Sale | null>(null);
   const [returnQtys, setReturnQtys] = useState<Record<string, number>>({});
+  const [returnReduction, setReturnReduction] = useState<number>(0);
   const [recentSales, setRecentSales] = useState<Sale[]>([]);
 
   // Dynamic categories from database
@@ -676,6 +677,7 @@ export default function CaissePage() {
     setRetourDateFilter(getTodayString());
     setSelectedSaleForReturn(null);
     setReturnQtys({});
+    setReturnReduction(0);
     fetchRecentSales();
     setShowRetour(true);
   };
@@ -704,13 +706,49 @@ export default function CaissePage() {
     return returned;
   };
 
+  const computeSuggestedReduction = (sale: Sale, currentQtys: Record<string, number>) => {
+    if (!sale.reduction || sale.reduction <= 0) return 0;
+
+    const originalSubtotal = sale.items.reduce((sum, item) => {
+      const price = item.customUnitPrice ?? item.product.priceSale;
+      return sum + (price * item.quantity);
+    }, 0);
+
+    if (originalSubtotal <= 0) return 0;
+
+    const returnedSubtotal = sale.items.reduce((sum, item, idx) => {
+      const key = `${item.product.id}-${idx}`;
+      const qty = currentQtys[key] || 0;
+      const price = item.customUnitPrice ?? item.product.priceSale;
+      return sum + (price * qty);
+    }, 0);
+
+    const ratio = returnedSubtotal / originalSubtotal;
+    return Math.round(ratio * sale.reduction);
+  };
+
   const selectSaleForReturn = (sale: Sale) => {
     setSelectedSaleForReturn(sale);
+    const alreadyReturned = getAlreadyReturnedQtys(sale);
     const qtys: Record<string, number> = {};
     sale.items.forEach((item, idx) => {
-      qtys[`${item.product.id}-${idx}`] = 0;
+      const key = `${item.product.id}-${idx}`;
+      const alreadyReturnedQty = alreadyReturned[key] || 0;
+      const maxReturnable = Math.max(0, item.quantity - alreadyReturnedQty);
+      qtys[key] = maxReturnable;
     });
     setReturnQtys(qtys);
+    setReturnReduction(computeSuggestedReduction(sale, qtys));
+  };
+
+  const updateReturnQty = (key: string, newQty: number) => {
+    setReturnQtys(prev => {
+      const next = { ...prev, [key]: newQty };
+      if (selectedSaleForReturn) {
+        setReturnReduction(computeSuggestedReduction(selectedSaleForReturn, next));
+      }
+      return next;
+    });
   };
 
   const handleReturnSubmit = async () => {
@@ -720,7 +758,7 @@ export default function CaissePage() {
     const alreadyReturned = getAlreadyReturnedQtys(selectedSaleForReturn);
 
     try {
-      let refundTotal = 0;
+      let rawRefundSubtotal = 0;
       const returnedItems: CartItem[] = [];
 
       for (let i = 0; i < selectedSaleForReturn.items.length; i++) {
@@ -733,7 +771,7 @@ export default function CaissePage() {
         if (qtyToReturn <= 0) continue;
 
         const subtotal = qtyToReturn * (item.customUnitPrice ?? item.product.priceSale);
-        refundTotal += subtotal;
+        rawRefundSubtotal += subtotal;
 
         returnedItems.push({
           ...item,
@@ -758,9 +796,12 @@ export default function CaissePage() {
         return;
       }
 
+      const appliedReduction = Math.min(rawRefundSubtotal, Math.max(0, returnReduction));
+      const finalRefundTotal = Math.max(0, rawRefundSubtotal - appliedReduction);
+
       // If it was a credit sale, reduce client balance
       if (selectedSaleForReturn.type === 'credit' && selectedSaleForReturn.clientId) {
-        await updateClientCredit(selectedSaleForReturn.clientId, -refundTotal);
+        await updateClientCredit(selectedSaleForReturn.clientId, -finalRefundTotal);
       }
 
       // Record the return sale
@@ -768,17 +809,17 @@ export default function CaissePage() {
         id: generateId(),
         type: 'return',
         items: returnedItems,
-        reduction: 0,
-        total: refundTotal,
-        paidAmount: selectedSaleForReturn.type === 'direct' ? refundTotal : 0,
-        creditAmount: selectedSaleForReturn.type === 'credit' ? refundTotal : 0,
+        reduction: appliedReduction,
+        total: finalRefundTotal,
+        paidAmount: selectedSaleForReturn.type === 'direct' ? finalRefundTotal : 0,
+        creditAmount: selectedSaleForReturn.type === 'credit' ? finalRefundTotal : 0,
         clientId: selectedSaleForReturn.clientId,
         date: new Date().toISOString(),
         username: user?.username,
         originalSaleId: selectedSaleForReturn.id
       } as Sale);
 
-      toast({ title: "Retour effectué", description: `Le retour d'un montant de ${formatDZD(refundTotal)} a été enregistré.` });
+      toast({ title: "Retour effectué", description: `Le retour d'un montant de ${formatDZD(finalRefundTotal)} a été enregistré.` });
 
       // Refresh all relevant state
       const [prods, cls, updatedSales] = await Promise.all([getProducts(), getClients(), getSales()]);
@@ -786,10 +827,10 @@ export default function CaissePage() {
       setClients(cls);
       setRecentSales(updatedSales);
 
-      // Go back to the sale list view (don't close the whole dialog)
-      // so the user can see the updated quantities and do another return if needed
+      // Go back to the sale list view
       setSelectedSaleForReturn(null);
       setReturnQtys({});
+      setReturnReduction(0);
     } catch (error) {
       console.error("Return failed:", error);
       toast({ title: "Erreur", description: "Le retour a échoué." });
@@ -833,9 +874,8 @@ export default function CaissePage() {
       </head>
       <body>
         <div class="text-center">
-          <div class="bold" style="font-size: 22px;">FOUZY IPHONE</div>
+          <div class="bold" style="font-size: 22px;">BK MODE</div>
           <div style="font-size: 12px; margin-top: 4px;">TICKET D'ACHAT</div>
-          <div style="font-size: 11px; margin-top: 4px;">Tel: 0552 93 09 49</div>
         </div>
         <div class="hr"></div>
         <div style="font-size: 10px;">
@@ -881,9 +921,8 @@ export default function CaissePage() {
           ` : ''}
         </div>
         <div class="footer">
-          <div style="font-weight: bold; font-size: 12px; margin-bottom: 4px;">garantie de marche 10 jours</div>
-          <div style="font-size: 11px;">Instagram: le_roi_de_phone &nbsp;•&nbsp; TikTok: fo_phone</div>
-          <div style="font-size: 11px; margin-top: 6px;">Bazar taraddhi Local N 32 3eme etage Belfort Harach</div>
+          <div style="font-weight: bold; font-size: 11px; margin-bottom: 2px;">Les retours et échanges sont acceptés sous 3 jours</div>
+          <div style="font-weight: bold; font-size: 12px; margin-bottom: 6px; direction: rtl;">الاسترجاع والاستبدال مقبول خلال 3 أيام</div>
           <div style="margin-top: 6px;">Merci pour votre confiance !</div>
         </div>
         <script>
@@ -1579,6 +1618,11 @@ export default function CaissePage() {
                                 <span className={`px-1.5 py-0.5 rounded-md ${record.sale.type === 'credit' ? 'text-red-500 bg-red-50' : 'text-emerald-500 bg-emerald-50'}`}>
                                   {record.sale.type.toUpperCase()}
                                 </span>
+                                {(record.sale.reduction || 0) > 0 && (
+                                  <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-md text-[10px] font-black border border-red-200">
+                                    Réduction ticket: -{formatDZD(record.sale.reduction)}
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <div className="flex items-center gap-6">
@@ -1609,19 +1653,32 @@ export default function CaissePage() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-8">
-                <div className="bg-orange-50/50 p-6 rounded-2xl border border-orange-100 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-black text-orange-600 uppercase tracking-widest">Ticket Sélectionné</p>
-                    <p className="text-xl font-black text-gray-700 mt-1">#{selectedSaleForReturn.id.toUpperCase()}</p>
-                    <p className="text-sm font-bold text-gray-500">{new Date(selectedSaleForReturn.date).toLocaleString('fr-FR')}</p>
+              <div className="space-y-5">
+                {/* Compact Ticket Header */}
+                <div className="bg-orange-50/60 p-4 rounded-2xl border border-orange-100 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-orange-600 uppercase tracking-widest">Ticket</span>
+                        <span className="text-lg font-black text-gray-800">#{selectedSaleForReturn.id.toUpperCase()}</span>
+                        {(selectedSaleForReturn.reduction || 0) > 0 && (
+                          <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-md text-xs font-bold border border-red-200">
+                            Réduction ticket: -{formatDZD(selectedSaleForReturn.reduction)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 font-medium mt-0.5">{new Date(selectedSaleForReturn.date).toLocaleString('fr-FR')}</p>
+                    </div>
                   </div>
-                  <Button variant="ghost" onClick={() => setSelectedSaleForReturn(null)} className="text-orange-600 font-bold">Changer</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedSaleForReturn(null)} className="text-orange-600 font-bold hover:bg-orange-100">
+                    Changer
+                  </Button>
                 </div>
 
-                <div className="space-y-4">
-                  <p className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Produits à retourner</p>
-                  <div className="divide-y divide-gray-50 border border-gray-100 rounded-2xl overflow-hidden bg-white">
+                {/* Products list */}
+                <div className="space-y-2">
+                  <p className="text-xs font-black text-gray-400 uppercase tracking-wider pl-1">Produits à retourner</p>
+                  <div className="divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden bg-white">
                     {(() => {
                       const alreadyReturnedQtys = getAlreadyReturnedQtys(selectedSaleForReturn);
                       return selectedSaleForReturn.items.map((item, idx) => {
@@ -1632,44 +1689,39 @@ export default function CaissePage() {
                         const isFullyReturned = maxReturnable === 0;
                         return (
                           <div key={key} className={`p-4 flex items-center justify-between ${isFullyReturned ? 'opacity-50' : ''}`}>
-                            <div className="flex-1">
-                              <p className="font-bold text-gray-700">{item.product.name} {item.size ? `(${item.size})` : ''}</p>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <p className="text-xs text-gray-400">Acheté: {item.quantity}</p>
+                            <div className="flex-1 min-w-0 pr-4">
+                              <p className="font-bold text-gray-800 truncate">{item.product.name} {item.size ? `(${item.size})` : ''}</p>
+                              <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
+                                <span>Acheté: {item.quantity}</span>
                                 {alreadyReturnedQty > 0 && (
-                                  <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded-md">
-                                    Déjà retourné: {alreadyReturnedQty}
+                                  <span className="font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded-md">
+                                    Retourné: {alreadyReturnedQty}
                                   </span>
                                 )}
-                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md ${
-                                  isFullyReturned
-                                    ? 'text-red-500 bg-red-50'
-                                    : 'text-emerald-600 bg-emerald-50'
-                                }`}>
-                                  {isFullyReturned ? 'Entièrement retourné' : `Retournable: ${maxReturnable}`}
-                                </span>
                               </div>
                             </div>
                             <div className="flex items-center gap-4">
                               <div className="flex items-center gap-2">
                                 <button
-                                  onClick={() => setReturnQtys(prev => ({ ...prev, [key]: Math.max(0, (prev[key] || 0) - 1) }))}
+                                  type="button"
+                                  onClick={() => updateReturnQty(key, Math.max(0, currentVal - 1))}
                                   disabled={isFullyReturned || currentVal <= 0}
-                                  className="h-10 w-10 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center hover:bg-orange-50 hover:text-orange-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                  className="h-9 w-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-700 hover:bg-orange-100 hover:text-orange-600 transition-colors disabled:opacity-30"
                                 >
                                   <Minus className="h-4 w-4" />
                                 </button>
-                                <span className="w-8 text-center font-black text-lg">{currentVal}</span>
+                                <span className="w-7 text-center font-black text-base">{currentVal}</span>
                                 <button
-                                  onClick={() => setReturnQtys(prev => ({ ...prev, [key]: Math.min(maxReturnable, (prev[key] || 0) + 1) }))}
+                                  type="button"
+                                  onClick={() => updateReturnQty(key, Math.min(maxReturnable, currentVal + 1))}
                                   disabled={isFullyReturned || currentVal >= maxReturnable}
-                                  className="h-10 w-10 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center hover:bg-orange-50 hover:text-orange-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                  className="h-9 w-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-700 hover:bg-orange-100 hover:text-orange-600 transition-colors disabled:opacity-30"
                                 >
                                   <Plus className="h-4 w-4" />
                                 </button>
                               </div>
                               <div className="w-24 text-right">
-                                <p className="font-black text-orange-600">{formatDZD(currentVal * (item.customUnitPrice ?? item.product.priceSale))}</p>
+                                <p className="font-black text-orange-600 text-base">{formatDZD(currentVal * (item.customUnitPrice ?? item.product.priceSale))}</p>
                               </div>
                             </div>
                           </div>
@@ -1679,10 +1731,60 @@ export default function CaissePage() {
                   </div>
                 </div>
 
-                <div className="pt-4 flex gap-4">
-                  <Button variant="ghost" className="flex-1 h-16 text-lg font-bold rounded-xl" onClick={() => setShowRetour(false)}>Annuler</Button>
+                {/* Refund calculation summary */}
+                {(() => {
+                  const rawRefundSubtotal = selectedSaleForReturn.items.reduce((sum, item, idx) => {
+                    const key = `${item.product.id}-${idx}`;
+                    const qty = returnQtys[key] || 0;
+                    return sum + (qty * (item.customUnitPrice ?? item.product.priceSale));
+                  }, 0);
+                  const appliedReduction = Math.min(rawRefundSubtotal, Math.max(0, returnReduction));
+                  const finalRefundTotal = Math.max(0, rawRefundSubtotal - appliedReduction);
+
+                  return (
+                    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex justify-between items-center text-sm font-bold text-gray-600">
+                        <span>Sous-total produits :</span>
+                        <span className="text-gray-800 font-black">{formatDZD(rawRefundSubtotal)}</span>
+                      </div>
+
+                      {(selectedSaleForReturn.reduction || 0) > 0 && (
+                        <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-200">
+                          <button
+                            type="button"
+                            onClick={() => setReturnReduction(selectedSaleForReturn.reduction)}
+                            className="font-bold text-red-600 hover:underline text-left cursor-pointer"
+                            title="Cliquer pour appliquer la réduction totale"
+                          >
+                            Réduction à déduire ({formatDZD(selectedSaleForReturn.reduction)}) :
+                          </button>
+                          <div className="flex items-center gap-1">
+                            <span className="text-red-600 font-bold">-</span>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={returnReduction || ""}
+                              onChange={e => setReturnReduction(Math.max(0, Number(e.target.value) || 0))}
+                              placeholder="0"
+                              className="w-28 h-9 text-right font-black text-red-600 border-gray-300 rounded-lg bg-white"
+                            />
+                            <span className="text-xs font-bold text-gray-500">DZD</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                        <span className="text-base font-black text-gray-800 uppercase">Remboursement total :</span>
+                        <span className="text-2xl font-black text-orange-600">{formatDZD(finalRefundTotal)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="pt-2 flex gap-3">
+                  <Button variant="ghost" className="flex-1 h-14 text-base font-bold rounded-xl" onClick={() => setShowRetour(false)}>Annuler</Button>
                   <Button
-                    className="flex-[2] h-16 bg-orange-600 hover:bg-orange-700 text-white font-black text-xl rounded-xl shadow-xl shadow-orange-200 transition-all hover:-translate-y-1"
+                    className="flex-[2] h-14 bg-orange-600 hover:bg-orange-700 text-white font-black text-lg rounded-xl shadow-lg transition-all"
                     onClick={handleReturnSubmit}
                   >
                     Confirmer le Retour
@@ -1697,11 +1799,10 @@ export default function CaissePage() {
         <DialogContent className="sm:max-w-[400px] bg-gray-100 p-0 overflow-hidden border-0">
           <div className="bg-white mx-auto my-6 p-6 shadow-lg min-h-[500px] w-[350px] font-mono text-black relative flex flex-col">
             <div className="text-center mb-4">
-              <h2 className="text-2xl font-black">FOUZY IPHONE</h2>
+              <h2 className="text-2xl font-black">BK MODE</h2>
               <p className="text-xs uppercase tracking-widest mt-1">Ticket d'achat</p>
-              <p className="text-[11px] mt-1">Tel: 0552 93 09 49</p>
             </div>
-
+            
             <div className="border-b border-dashed border-black my-3" />
 
             <div className="text-[10px] space-y-0.5">
@@ -1755,11 +1856,10 @@ export default function CaissePage() {
               )}
             </div>
 
-            <div className="mt-auto pt-6 text-center text-[10px] italic space-y-1">
-              <div className="font-bold text-[11px]">garantie de marche 10 jours</div>
-              <div className="text-[10px]">Instagram: le_roi_de_phone • TikTok: fo_phone</div>
-              <div className="text-[10px]">Bazar taraddhi Local N 32 3eme etage Belfort Harach</div>
-              <div className="text-[10px]">Merci pour votre visite !</div>
+            <div className="mt-auto pt-6 text-center text-[10px] space-y-1">
+              <div className="font-bold text-[11px]">Les retours et échanges sont acceptés sous 3 jours</div>
+              <div className="font-bold text-xs" dir="rtl">الاسترجاع والاستبدال مقبول خلال 3 أيام</div>
+              <div className="text-[10px] italic mt-1">Merci pour votre visite !</div>
             </div>
           </div>
 

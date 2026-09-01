@@ -121,18 +121,46 @@ export default function AnalytiquePage() {
       }
     });
 
+    const returnTotalsByOriginalSale = new Map<string, number>();
+    const returnCostsByOriginalSale = new Map<string, number>();
+
+    salesUpToCutoff.forEach(s => {
+      if (s.type === 'return' && s.originalSaleId) {
+        const cost = Math.abs(s.items.reduce((is, item) => is + getItemPurchaseCost(item), 0));
+        const tot = Math.abs(s.total);
+        returnTotalsByOriginalSale.set(
+          s.originalSaleId,
+          (returnTotalsByOriginalSale.get(s.originalSaleId) || 0) + tot
+        );
+        returnCostsByOriginalSale.set(
+          s.originalSaleId,
+          (returnCostsByOriginalSale.get(s.originalSaleId) || 0) + cost
+        );
+      }
+    });
+
     const profitMap = new Map<string, number>();
     salesUpToCutoff.forEach(sale => {
-      const saleCost = getSalePurchaseCost(sale);
-      const saleTotal = sale.type === 'return' ? -Math.abs(sale.total) : sale.total;
-
       if (sale.type === 'return') {
-        profitMap.set(sale.id, saleTotal - saleCost);
+        if (sale.originalSaleId) {
+          profitMap.set(sale.id, 0);
+        } else {
+          const saleCost = getSalePurchaseCost(sale);
+          const saleTotal = -Math.abs(sale.total);
+          profitMap.set(sale.id, saleTotal - saleCost);
+        }
         return;
       }
 
+      const rawCost = sale.items.reduce((is, item) => is + getItemPurchaseCost(item), 0);
+      const retTotal = returnTotalsByOriginalSale.get(sale.id) || 0;
+      const retCost = returnCostsByOriginalSale.get(sale.id) || 0;
+
+      const effectiveTotal = Math.max(0, sale.total - retTotal);
+      const effectiveCost = Math.max(0, rawCost - retCost);
+
       if (sale.type === 'direct') {
-        profitMap.set(sale.id, saleTotal - saleCost);
+        profitMap.set(sale.id, effectiveTotal - effectiveCost);
         return;
       }
 
@@ -141,8 +169,8 @@ export default function AnalytiquePage() {
         const allocatedCredit = allocatedCreditPaymentPerSale.get(sale.id) || 0;
         const totalPaid = initialPaid + allocatedCredit;
 
-        const maxProfit = Math.max(0, saleTotal - saleCost);
-        const recognizedProfit = Math.max(0, Math.min(maxProfit, totalPaid - saleCost));
+        const maxProfit = Math.max(0, effectiveTotal - effectiveCost);
+        const recognizedProfit = Math.max(0, Math.min(maxProfit, totalPaid - effectiveCost));
         profitMap.set(sale.id, recognizedProfit);
       }
     });
