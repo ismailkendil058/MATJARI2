@@ -36,3 +36,14 @@ export function findProductByBarcode(products: Product[], barcode: unknown): Pro
     getBarcodeLookupKeys(product.barcode).some(key => scannedKeys.has(key))
   );
 }
+
+export function generateBarcodeValue(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash << 5) - hash + name.charCodeAt(i);
+    hash |= 0;
+  }
+  const posHash = Math.abs(hash).toString().padStart(10, '0').slice(-10);
+  return `355${posHash.slice(0, 9)}`;
+}
+

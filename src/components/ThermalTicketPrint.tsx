@@ -52,7 +52,7 @@ export const THERMAL_PRINT_CSS = `
   padding: ${TICKET_SAFE_MARGIN_MM}mm;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   justify-content: space-between;
   font-family: Arial, Helvetica, sans-serif;
   background: #fff;
@@ -66,7 +66,7 @@ export const THERMAL_PRINT_CSS = `
 }
 
 .ticket-name {
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   white-space: nowrap;
@@ -84,7 +84,7 @@ export const THERMAL_PRINT_CSS = `
 }
 
 .ticket-price {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 900;
   text-align: center;
   line-height: 1.1;
@@ -92,7 +92,7 @@ export const THERMAL_PRINT_CSS = `
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  margin: 0;
+  margin: 1px 0 0 0;
   padding: 0;
   transform: none;
   white-space: nowrap;
@@ -110,7 +110,7 @@ export const THERMAL_PRINT_CSS = `
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  margin: 0;
+  margin: 1px 0;
   padding: 0;
   transform: none;
 }
@@ -133,61 +133,84 @@ export const THERMAL_PRINT_CSS = `
   overflow: hidden;
   color: #000;
   font-family: "Courier New", Courier, monospace;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.2px;
   text-align: center;
   white-space: nowrap;
   transform: none;
+  flex-shrink: 0;
 }
 
 @media print {
+  body > *:not(#print-root) {
+    display: none !important;
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    width: ${TICKET_WIDTH_MM}mm !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
   #print-root {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: auto;
-    height: auto;
-    overflow: visible;
-  }
-
-  body * {
-    visibility: hidden;
-  }
-
-  .print-area,
-  .print-area * {
-    visibility: visible;
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: ${TICKET_WIDTH_MM}mm !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    visibility: visible !important;
   }
 
   .print-area {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: ${TICKET_WIDTH_MM}mm;
-    overflow: hidden;
+    display: block !important;
+    position: relative !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: ${TICKET_WIDTH_MM}mm !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    visibility: visible !important;
   }
 
   .ticket {
-    display: flex;
-    flex-direction: column;
-    width: ${TICKET_WIDTH_MM}mm;
-    height: ${TICKET_HEIGHT_MM}mm;
-    max-width: ${TICKET_WIDTH_MM}mm;
-    max-height: ${TICKET_HEIGHT_MM}mm;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: ${TICKET_WIDTH_MM}mm !important;
+    height: ${TICKET_HEIGHT_MM}mm !important;
+    max-width: ${TICKET_WIDTH_MM}mm !important;
+    max-height: ${TICKET_HEIGHT_MM}mm !important;
     overflow: hidden !important;
-    box-sizing: border-box;
-    padding: ${TICKET_SAFE_MARGIN_MM}mm;
-    page-break-after: always;
-    page-break-inside: avoid;
-    break-after: page;
-    break-inside: avoid;
+    box-sizing: border-box !important;
+    padding: ${TICKET_SAFE_MARGIN_MM}mm !important;
+    margin: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    visibility: visible !important;
+    page-break-after: always !important;
+    page-break-inside: avoid !important;
+    break-after: page !important;
+    break-inside: avoid !important;
   }
 
   .ticket:last-child {
-    page-break-after: auto;
-    break-after: auto;
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  .ticket * {
+    visibility: visible !important;
   }
 }
 `;

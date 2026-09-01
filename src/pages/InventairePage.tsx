@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { getProducts, updateProduct, deleteProduct, getCategories, getCustomCards } from "@/lib/db";
 import { Product, Category, CustomSaleCard } from "@/lib/types";
 import { formatDZD } from "@/lib/store";
-import { normalizeBarcode } from "@/lib/barcode";
+import { normalizeBarcode, generateBarcodeValue } from "@/lib/barcode";
 import { BarcodeSvg } from "@/components/BarcodeSvg";
 import { printThermalTickets } from "@/lib/printThermalTickets";
 import { TICKET_HEIGHT_MM, TICKET_SAFE_MARGIN_MM, TICKET_WIDTH_MM } from "@/lib/thermalBarcode";
@@ -84,7 +84,10 @@ export default function InventairePage() {
   };
 
   const handleOpenBarcodeModal = (product: Product) => {
-    const barcode = normalizeBarcode(product.barcode);
+    let barcode = normalizeBarcode(product.barcode);
+    if (!barcode && product.name) {
+      barcode = generateBarcodeValue(product.name);
+    }
     if (!barcode) {
       toast.error("Ce produit n'a pas de code-barres");
       return;
@@ -95,7 +98,7 @@ export default function InventairePage() {
       name: product.name,
       barcode,
       priceSale: product.priceSale || 0,
-      copies: 1,
+      copies: product.stock > 0 ? product.stock : 1,
     }]);
     setShowBarcodeModal(true);
   };
