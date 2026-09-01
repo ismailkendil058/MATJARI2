@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import {
   Search, Plus, Minus, Trash2, Package, Printer, Calendar
 } from "lucide-react";
@@ -13,6 +13,7 @@ import {
 
 import { Product, CartItem, CategoryType, CustomSaleCard, Client, Sale, Expense, Category } from "@/lib/types";
 import { formatDZD, generateId } from "@/lib/store";
+import { findProductByBarcode, normalizeBarcode } from "@/lib/barcode";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/AuthContext";
 import { CATEGORY_ICON_MAP } from "@/lib/icons";
@@ -38,8 +39,8 @@ const getSaleDateString = (dateStr: string) => {
   return `${year}-${month}-${day}`;
 };
 
-const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45"];
+const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+const SHOE_SIZES = ["28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"];
 
 export default function CaissePage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -47,6 +48,7 @@ export default function CaissePage() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<CategoryType | null>(null);
   const [barcodeInput, setBarcodeInput] = useState("");
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const { user } = useAuth();
   const [reduction, setReduction] = useState(0);
@@ -94,6 +96,21 @@ export default function CaissePage() {
 
   // Dynamic categories from database
   const [dbCategories, setDbCategories] = useState<Category[]>([]);
+
+  const focusBarcodeInput = useCallback(() => {
+    barcodeInputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    focusBarcodeInput();
+  }, [focusBarcodeInput, mobileSection]);
+
+  const handleCaisseClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.closest("button, input, textarea, select, a, [role='dialog']")) return;
+    focusBarcodeInput();
+  };
 
   // Derived lookups from dynamic categories
   const categoryColors = useMemo(() => {
@@ -415,17 +432,21 @@ export default function CaissePage() {
     }
   };
 
-  const handleAddByBarcode = (code?: string) => {
-    const val = (code ?? barcodeInput).trim();
+  const handleAddByBarcode = async (code?: string) => {
+    const val = normalizeBarcode(code ?? barcodeInput);
     if (!val) return;
-    const found = products.find(p => p.barcode === val);
+    setBarcodeInput("");
+
+    let found = findProductByBarcode(products, val);
+    if (!found) {
+      const latestProducts = await getProducts();
+      setProducts(latestProducts);
+      found = findProductByBarcode(latestProducts, val);
+    }
     if (!found) {
       toast({ title: "Produit non trouvé", description: "Aucun produit avec ce code-barre." });
-      setBarcodeInput("");
       return;
     }
-
-    setBarcodeInput("");
 
     if (productHasSizes(found)) {
       sizeModalOpenTimeRef.current = Date.now();
@@ -896,7 +917,7 @@ export default function CaissePage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col lg:flex-row animate-fade-in bg-secondary font-sans">
+    <div className="flex min-h-screen flex-col lg:flex-row animate-fade-in bg-secondary font-sans" onClick={handleCaisseClick}>
       <div className="lg:hidden w-full border-b border-border bg-white px-4 pt-4 pb-3 shadow-sm z-10">
         <div className="flex items-center justify-between">
           <div>
@@ -1088,10 +1109,16 @@ export default function CaissePage() {
 
         <div className="p-4 border-b border-border bg-white">
           <Input
+            ref={barcodeInputRef}
             placeholder="Scanner / entrer code-barre..."
             value={barcodeInput}
             onChange={e => setBarcodeInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAddByBarcode(); }}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void handleAddByBarcode(e.currentTarget.value);
+              }
+            }}
             className="h-14 text-lg"
           />
         </div>
@@ -1295,7 +1322,9 @@ export default function CaissePage() {
       <Dialog open={showSizeModal} onOpenChange={setShowSizeModal}>
         <DialogContent onOpenAutoFocus={e => e.preventDefault()} className="sm:max-w-sm bg-white border-0 shadow-xl rounded-2xl p-6">
           <DialogHeader>
-            <DialogTitle className="text-xl font-black text-center text-foreground border-b border-border pb-4 mb-2 tracking-tight">Veuillez choisir la Taille</DialogTitle>
+            <DialogTitle className="text-xl font-black text-center text-foreground border-b border-border pb-4 mb-2 tracking-tight">
+              Veuillez choisir la Taille pour {sizeModalProduct?.name || "ce produit"}
+            </DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4 py-4 max-h-[50vh] overflow-y-auto pr-1">
             {(() => {

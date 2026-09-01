@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
-import { Search, Edit2, Trash2, X, Save, Eye, Layers, Tag } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { Search, Edit2, Trash2, X, Save, Eye, Layers, Tag, Barcode, Printer } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -8,11 +8,23 @@ import { Label } from "@/components/ui/label";
 import { getProducts, updateProduct, deleteProduct, getCategories, getCustomCards } from "@/lib/db";
 import { Product, Category, CustomSaleCard } from "@/lib/types";
 import { formatDZD } from "@/lib/store";
+import { normalizeBarcode } from "@/lib/barcode";
+import { BarcodeSvg } from "@/components/BarcodeSvg";
+import { printThermalTickets } from "@/lib/printThermalTickets";
+import { TICKET_HEIGHT_MM, TICKET_SAFE_MARGIN_MM, TICKET_WIDTH_MM } from "@/lib/thermalBarcode";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { toast } from "sonner";
 
-const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-const SHOE_SIZES = ["39", "40", "41", "42", "43", "44", "45"];
+const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+const SHOE_SIZES = ["28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"];
+
+type BarcodeModalItem = {
+  id: string;
+  name: string;
+  barcode: string;
+  priceSale: number;
+  copies: number;
+};
 
 export default function InventairePage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -24,6 +36,9 @@ export default function InventairePage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedDetailProduct, setSelectedDetailProduct] = useState<Product | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [modalBarcodeItems, setModalBarcodeItems] = useState<BarcodeModalItem[]>([]);
+  const isPrintingRef = useRef(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -68,6 +83,23 @@ export default function InventairePage() {
     setShowDetailModal(true);
   };
 
+  const handleOpenBarcodeModal = (product: Product) => {
+    const barcode = normalizeBarcode(product.barcode);
+    if (!barcode) {
+      toast.error("Ce produit n'a pas de code-barres");
+      return;
+    }
+
+    setModalBarcodeItems([{
+      id: product.id,
+      name: product.name,
+      barcode,
+      priceSale: product.priceSale || 0,
+      copies: 1,
+    }]);
+    setShowBarcodeModal(true);
+  };
+
   const handleSaveEdit = async () => {
     if (!editingProduct) return;
     try {
@@ -82,9 +114,56 @@ export default function InventairePage() {
     }
   };
 
+  const printBarcodeLabels = (printList: { name: string; barcode: string; priceSale: number }[]) => {
+    if (printList.length === 0) {
+      toast.error("Aucune étiquette sélectionnée pour l'impression");
+      return;
+    }
+
+    isPrintingRef.current = true;
+    printThermalTickets(printList.map(item => ({
+      name: item.name,
+      price: item.priceSale,
+      barcode: item.barcode,
+    })));
+    setTimeout(() => {
+      isPrintingRef.current = false;
+    }, 1000);
+  };
+
+  const handlePrintSingleBarcode = (item: BarcodeModalItem) => {
+    printBarcodeLabels(Array.from({ length: item.copies }, () => ({
+      name: item.name,
+      barcode: item.barcode,
+      priceSale: item.priceSale,
+    })));
+  };
+
+  const handleExecutePrintBarcodes = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    const printList = modalBarcodeItems.flatMap(item => Array.from({ length: item.copies }, () => ({
+      name: item.name,
+      barcode: item.barcode,
+      priceSale: item.priceSale,
+    })));
+    printBarcodeLabels(printList);
+  };
+
   const filtered = useMemo(() => {
+    const searchTerm = search.trim().toLowerCase();
+    const barcodeSearchTerm = normalizeBarcode(searchTerm).toLowerCase();
+    const compactBarcodeSearchTerm = barcodeSearchTerm.replace(/[ -]/g, "");
+
     return products.filter(p => {
-      const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase());
+      const productBarcode = normalizeBarcode(p.barcode).toLowerCase();
+      const compactProductBarcode = productBarcode.replace(/[ -]/g, "");
+      const matchName = !searchTerm || p.name.toLowerCase().includes(searchTerm);
+      const matchBarcode = Boolean(barcodeSearchTerm) && (
+        productBarcode.includes(barcodeSearchTerm) ||
+        compactProductBarcode.includes(compactBarcodeSearchTerm)
+      );
+      const matchSearch = !searchTerm || matchName || matchBarcode;
       const matchCat = !catFilter || p.category === catFilter;
       return matchSearch && matchCat;
     });
@@ -108,7 +187,11 @@ export default function InventairePage() {
   }, [filtered]);
 
   const { totalBuy, totalSale } = useMemo(() => {
-    return products.reduce(
+    const productsForTotals = catFilter
+      ? products.filter(product => product.category === catFilter)
+      : products;
+
+    return productsForTotals.reduce(
       (acc, p) => {
         const qty = p.stock || 0;
         acc.totalBuy += (p.priceBuy || 0) * qty;
@@ -117,7 +200,124 @@ export default function InventairePage() {
       },
       { totalBuy: 0, totalSale: 0 }
     );
-  }, [products]);
+  }, [products, catFilter]);
+
+  const renderBarcodeModal = () => (
+    <Dialog
+      open={showBarcodeModal}
+      onOpenChange={open => {
+        if (!open && isPrintingRef.current) return;
+        setShowBarcodeModal(open);
+      }}
+      modal
+    >
+      <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
+        <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+              <Barcode className="h-7 w-7 text-primary" />
+              Aperçu des Étiquettes Code-barres
+            </DialogTitle>
+          </div>
+        </DialogHeader>
+
+        <div className="border-b border-slate-200 bg-slate-100/80 px-8 py-3 text-center text-xs font-bold text-slate-600">
+          Format automatique : {TICKET_WIDTH_MM} × {TICKET_HEIGHT_MM} mm · marge de sécurité de {TICKET_SAFE_MARGIN_MM} mm sur chaque bord
+        </div>
+
+        <div className="p-8 max-h-[55vh] overflow-y-auto space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {modalBarcodeItems.map((item, idx) => (
+              <div key={item.id} className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 pr-3">
+                    <p className="font-black text-slate-900 text-sm uppercase truncate">{item.name}</p>
+                    <p className="text-xs font-bold text-primary mt-0.5">{item.priceSale > 0 ? formatDZD(item.priceSale) : "Prix non fixé"}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handlePrintSingleBarcode(item)}
+                      title="Imprimer 1 étiquette"
+                      className="h-9 w-9 flex items-center justify-center rounded-xl bg-slate-900 text-white hover:bg-primary transition-colors shadow-sm"
+                    >
+                      <Printer className="h-4 w-4" />
+                    </button>
+                    <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                      <span className="text-[10px] font-black uppercase text-slate-400">Exemplaires:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={item.copies}
+                        onChange={e => {
+                          const val = Math.min(100, Math.max(1, Number(e.target.value) || 1));
+                          setModalBarcodeItems(prev => prev.map((current, i) => i === idx ? { ...current, copies: val } : current));
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }
+                        }}
+                        className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center shadow-inner relative group">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                    Modèle Xprinter · 40 × 20 mm
+                  </span>
+                  <div
+                    className="bg-white rounded-xl border-2 border-slate-900 shadow-md flex flex-col items-center justify-between relative overflow-hidden"
+                    style={{ width: "200px", height: "100px", boxSizing: "border-box", padding: "10px" }}
+                  >
+                    <div className="w-full h-full flex flex-col items-center justify-between">
+                      <span style={{ fontSize: "11px", fontWeight: 800, textTransform: "uppercase", color: "#000000", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0 }}>
+                        {item.name}
+                      </span>
+                      {item.priceSale > 0 && (
+                        <span style={{ fontSize: "12px", fontWeight: 900, color: "#000000", width: "100%", textAlign: "center", lineHeight: 1.1, flexShrink: 0, marginTop: "1px" }}>
+                          {formatDZD(item.priceSale)}
+                        </span>
+                      )}
+                      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
+                        <BarcodeSvg value={item.barcode} width={1.4} height={35} />
+                      </div>
+                      <span style={{ fontFamily: '"Courier New", Courier, monospace', fontSize: "9px", fontWeight: 700, lineHeight: 1, letterSpacing: "0.2px", whiteSpace: "nowrap" }}>
+                        {item.barcode}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-6 bg-white border-t flex items-center justify-between">
+          <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
+            Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, item) => acc + item.copies, 0)}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button type="button" variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
+              Fermer
+            </Button>
+            <Button
+              type="button"
+              onClick={handleExecutePrintBarcodes}
+              className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
+            >
+              <Printer className="h-5 w-5" />
+              Lancer l'impression
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 
   if (isMobile) {
     return (
@@ -216,6 +416,9 @@ export default function InventairePage() {
                           <p className="text-lg font-black">{product.stock}</p>
                         </div>
                         <div className="flex gap-1 justify-center" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => handleOpenBarcodeModal(product)} className="h-8 w-8 rounded-full bg-slate-900 flex items-center justify-center text-white active:bg-primary" title="Imprimer le code-barres">
+                            <Printer className="h-3.5 w-3.5" />
+                          </button>
                           <button onClick={() => handleEdit(product)} className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 active:bg-slate-200">
                             <Edit2 className="h-3.5 w-3.5" />
                           </button>
@@ -365,6 +568,7 @@ export default function InventairePage() {
             })()}
           </DialogContent>
         </Dialog>
+        {renderBarcodeModal()}
       </div>
     );
   }
@@ -458,6 +662,9 @@ export default function InventairePage() {
                   <td className="px-8 py-6 text-center font-black text-2xl text-primary">{formatDZD(p.priceSale)}</td>
                   <td className="px-8 py-6 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => handleOpenBarcodeModal(p)} className="h-10 w-10 p-0 rounded-xl bg-slate-900 text-white hover:text-white hover:bg-primary transition-all" title="Imprimer le code-barres">
+                        <Printer className="h-5 w-5" />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => handleEdit(p)} className="h-10 w-10 p-0 rounded-xl bg-slate-50 text-slate-400 hover:text-primary hover:bg-primary/5 transition-all" title="Modifier">
                         <Edit2 className="h-5 w-5" />
                       </Button>
@@ -711,6 +918,7 @@ export default function InventairePage() {
           })()}
         </DialogContent>
       </Dialog>
+      {renderBarcodeModal()}
     </div>
   );
 }

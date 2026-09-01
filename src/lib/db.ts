@@ -1,6 +1,7 @@
 import Database, { type QueryResult } from "@tauri-apps/plugin-sql";
 import { Product, Sale, Client, Payment, Supplier, Invoice, CustomSaleCard, User, Expense, Category } from "./types";
 import { DEFAULT_CATEGORIES } from "./store";
+import { normalizeBarcode } from "./barcode";
 
 const DB_FILENAME = "mimicha.db";
 const LEGACY_DB_FILENAME = "novadeco.db";
@@ -9,7 +10,10 @@ const LEGACY_DB_URI = `sqlite:${LEGACY_DB_FILENAME}`;
 const APP_TABLES = ["products", "clients", "suppliers", "sales", "payments", "invoices", "custom_cards", "users", "expenses", "categories"] as const;
 
 type RawSaleRow = Omit<Sale, "items"> & { items: string };
-type RawInvoiceRow = Omit<Invoice, "supplier" | "items"> & { supplier: string; items: string };
+type RawInvoiceRow = Omit<Invoice, "supplier" | "items"> & {
+    supplier: string;
+    items: string;
+};
 
 let db: Database | null = null;
 let dbPromise: Promise<Database> | null = null;
@@ -204,6 +208,7 @@ async function createTables(database: Database) {
     await database.execute(`CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(clientId)`);
     await database.execute(`CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(date)`);
     await database.execute(`CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)`);
+    await database.execute(`CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)`);
     await database.execute(`CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(name)`);
     await database.execute(`CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date)`);
 }
@@ -231,7 +236,7 @@ async function upsertProducts(database: Database, products: Product[]) {
         await runExecute(
             database,
             "INSERT OR REPLACE INTO products (id, name, nameAr, category, priceSale, priceBuy, stock, unit, barcode, expiryDate, sizeStock) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-            [product.id, product.name, product.nameAr, product.category, product.priceSale, product.priceBuy, product.stock, product.unit, product.barcode || null, product.expiryDate || null, product.sizeStock ? JSON.stringify(product.sizeStock) : null]
+            [product.id, product.name, product.nameAr, product.category, product.priceSale, product.priceBuy, product.stock, product.unit, normalizeBarcode(product.barcode) || null, product.expiryDate || null, product.sizeStock ? JSON.stringify(product.sizeStock) : null]
         );
 
     }
@@ -276,6 +281,23 @@ async function replaceCustomCards(database: Database, cards: CustomSaleCard[]) {
             "INSERT OR REPLACE INTO custom_cards (id, baseProductId, baseProductName, category, kg, unitPrice, priceBuyPerKg) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             [card.id, card.baseProductId, card.baseProductName, card.category, card.kg, card.unitPrice, card.priceBuyPerKg || null]
         );
+    }
+}
+
+async function normalizeStoredProductBarcodes(database: Database) {
+    const rows = await runSelect<{ id: string; barcode: unknown }[]>(
+        database,
+        "SELECT id, barcode FROM products WHERE barcode IS NOT NULL"
+    );
+
+    for (const row of rows) {
+        const normalized = normalizeBarcode(row.barcode);
+        if (normalized !== String(row.barcode)) {
+            await database.execute(
+                "UPDATE products SET barcode = $1 WHERE id = $2",
+                [normalized || null, row.id]
+            );
+        }
     }
 }
 
@@ -403,6 +425,7 @@ export async function initDb() {
                 } catch (e) { /* ignore if already exists */ }
 
                 await migrateLegacyDatabase(database);
+                await normalizeStoredProductBarcodes(database);
 
                 // Seed default categories if table is empty
                 try {
@@ -442,6 +465,7 @@ export async function getProducts(): Promise<Product[]> {
         const rows = await runSelect<any[]>(database, "SELECT * FROM products ORDER BY name ASC");
         return rows.map(r => ({
             ...r,
+            barcode: normalizeBarcode(r.barcode) || undefined,
             sizeStock: r.sizeStock ? JSON.parse(r.sizeStock) : undefined
         }));
     } catch (error) {
@@ -477,7 +501,7 @@ export async function updateProduct(product: Product) {
         await runExecute(
             database,
             "UPDATE products SET name = $1, nameAr = $2, category = $3, priceSale = $4, priceBuy = $5, stock = $6, unit = $7, barcode = $8, expiryDate = $9, sizeStock = $10 WHERE id = $11",
-            [product.name, product.nameAr, product.category, product.priceSale, product.priceBuy, product.stock, product.unit, product.barcode || null, product.expiryDate || null, product.sizeStock ? JSON.stringify(product.sizeStock) : null, product.id]
+            [product.name, product.nameAr, product.category, product.priceSale, product.priceBuy, product.stock, product.unit, normalizeBarcode(product.barcode) || null, product.expiryDate || null, product.sizeStock ? JSON.stringify(product.sizeStock) : null, product.id]
         );
 
     } catch (error) {
@@ -562,7 +586,7 @@ export async function getSales(monthPrefix?: string): Promise<Sale[]> {
             params = [monthPrefix + '%'];
         }
         const rows = await runSelect<RawSaleRow[]>(database, query, params);
-        return rows.map((row) => ({
+        return rows.filter(row => (row as RawInvoiceRow & { status?: string }).status !== "draft").map((row) => ({
             ...row,
             items: JSON.parse(row.items),
         } as Sale));

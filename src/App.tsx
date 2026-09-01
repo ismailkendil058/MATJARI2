@@ -37,7 +37,7 @@ const AppRoutes = () => (
       </ProtectedRoute>
     } />
     <Route path="/credits" element={
-      <ProtectedRoute requireAdmin>
+      <ProtectedRoute>
         <Layout><CreditsPage /></Layout>
       </ProtectedRoute>
     } />

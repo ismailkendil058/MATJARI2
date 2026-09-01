@@ -26,8 +26,8 @@ const COLOR_PRESETS = [
     "#16A085", "#2980B9", "#D35400", "#7F8C8D", "#BDC3C7",
 ];
 
-const SHIRT_SIZES_DISPLAY = "S, M, L, XL, XXL";
-const SHOE_SIZES_DISPLAY = "39 → 45";
+const SHIRT_SIZES_DISPLAY = "XS, S, M, L, XL, XXL, 3XL, 4XL, 5XL";
+const SHOE_SIZES_DISPLAY = "28 → 48";
 
 const emptyCategory: Omit<Category, "id"> = {
     key: "",

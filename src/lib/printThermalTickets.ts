@@ -1,4 +1,5 @@
 import { createRoot, type Root } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { createElement } from "react";
 import { toast } from "sonner";
 import { ThermalTicketPrint, type ThermalTicket } from "@/components/ThermalTicketPrint";
@@ -42,7 +43,9 @@ export function printThermalTickets(tickets: ThermalTicket[]): void {
   document.body.appendChild(printRootEl);
 
   reactRoot = createRoot(printRootEl);
-  reactRoot.render(createElement(ThermalTicketPrint, { tickets }));
+  flushSync(() => {
+    reactRoot?.render(createElement(ThermalTicketPrint, { tickets }));
+  });
 
   requestAnimationFrame(() => {
     if (!assertTicketDomCount(tickets.length)) {

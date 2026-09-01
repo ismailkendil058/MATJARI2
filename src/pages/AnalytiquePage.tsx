@@ -184,8 +184,8 @@ export default function AnalytiquePage() {
     return s + (sale.paidAmount || 0);
   }, 0);
 
-  // Vente Encaissée: Total cash received (from direct sales and credit payments) minus expenses
-  const venteEncaisser = directCash + totalPaymentCredits - totalExpenses;
+  // Vente Encaissée: Total cash received from direct sales and credit payments.
+  const venteEncaisser = directCash + totalPaymentCredits;
 
   const totalCost = monthlySales.reduce((s, sale) => {
     const saleCost = sale.items.reduce((is, item) => is + getItemPurchaseCost(item), 0);
@@ -203,7 +203,7 @@ export default function AnalytiquePage() {
     return sum;
   }, [salePeriodProfits]);
 
-  const profit = totalSalesProfit - totalExpenses;
+  const profit = totalSalesProfit;
   const totalCaisse = venteEncaisser;
 
   const categorySalesData = useMemo(() => {

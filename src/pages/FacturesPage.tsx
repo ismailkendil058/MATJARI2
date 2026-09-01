@@ -12,6 +12,7 @@ import {
 
 import { Invoice, InvoiceItem, Supplier, Product, CategoryType, Category } from "@/lib/types";
 import { formatDZD, generateId } from "@/lib/store";
+import { findProductByBarcode, normalizeBarcode } from "@/lib/barcode";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { toast } from "sonner";
 import { useAuth } from "@/components/AuthContext";
@@ -50,6 +51,19 @@ const generateBarcodeValue = (name: string): string => {
 
 
 type View = "list" | "add" | "return";
+const BARCODE_PRINT_VIEW_RESTORE_KEY = "matjari:barcode-print-view";
+const BARCODE_PRINT_VIEW_RESTORE_WINDOW_MS = 10_000;
+
+const getInitialFacturesView = (): View => {
+  try {
+    const expiresAt = Number(window.sessionStorage.getItem(BARCODE_PRINT_VIEW_RESTORE_KEY));
+    window.sessionStorage.removeItem(BARCODE_PRINT_VIEW_RESTORE_KEY);
+    return expiresAt > Date.now() ? "add" : "list";
+  } catch {
+    return "list";
+  }
+};
+
 type InvoiceFormItem = {
   productId: string;
   size?: string;
@@ -65,18 +79,6 @@ type InvoiceFormItem = {
 };
 
 
-
-const createInvoiceFormItem = (): InvoiceFormItem => ({
-  productId: "",
-  isNew: false,
-  newName: "",
-  newCategory: "hauts",
-  barcode: "",
-  quantity: 1,
-  priceBuy: 0,
-  priceSale: 0,
-  expiryDate: "",
-});
 
 const getEffectiveSizeQtys = (item: { size?: string; sizeQtys?: Record<string, number>; quantity: number }): Record<string, number> | undefined => {
   if (item.sizeQtys && Object.keys(item.sizeQtys).length > 0) {
@@ -147,7 +149,7 @@ export default function FacturesPage() {
   }, []);
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState("");
-  const [view, setView] = useState<View>("list");
+  const [view, setView] = useState<View>(getInitialFacturesView);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [activeCategory, setActiveCategory] = useState<CategoryType | null>("hauts");
   const [mobileSection, setMobileSection] = useState<"products" | "cart">("products");
@@ -161,6 +163,7 @@ export default function FacturesPage() {
     priceSale: number;
     copies: number;
   }[]>([]);
+  const isPrintingRef = React.useRef(false);
 
   // Add form state
   const [supplierId, setSupplierId] = useState("");
@@ -168,7 +171,6 @@ export default function FacturesPage() {
   const [isNewSupplier, setIsNewSupplier] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
   const [invoiceItems, setInvoiceItems] = useState<InvoiceFormItem[]>([]);
-  const [draftInvoiceItem, setDraftInvoiceItem] = useState<InvoiceFormItem>(createInvoiceFormItem());
 
   // Return form state
   const [returnInvoiceId, setReturnInvoiceId] = useState("");
@@ -183,8 +185,8 @@ export default function FacturesPage() {
   const [itemSale, setItemSale] = useState<number | "">("");
   const [itemCategory, setItemCategory] = useState<CategoryType>("hauts");
   const [itemBarcode, setItemBarcode] = useState("");
-  const SHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
-  const SHOE_SIZES = ["37", "38", "39", "40", "41", "42", "43", "44", "45"];
+  const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+  const SHOE_SIZES = ["28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"];
   const [sizeQtys, setSizeQtys] = useState<Record<string, number>>({});
   const [showSizeModal, setShowSizeModal] = useState(false);
 
@@ -224,7 +226,7 @@ export default function FacturesPage() {
         priceBuy: Number(itemBuy) || 0,
         stock: 0,
         unit: "unité",
-        barcode: itemBarcode || undefined,
+        barcode: normalizeBarcode(itemBarcode) || undefined,
       };
 
       try {
@@ -248,7 +250,7 @@ export default function FacturesPage() {
           sizeQtys: { ...sizeQtys },
           isNew,
           newName: isNew ? itemName : "",
-          barcode: isNew ? (itemBarcode || undefined) : selectedProduct?.barcode,
+          barcode: isNew ? (normalizeBarcode(itemBarcode) || undefined) : selectedProduct?.barcode,
           newCategory: selectedProduct ? selectedProduct.category : itemCategory,
           quantity: totalQty,
           priceBuy: Number(itemBuy),
@@ -263,7 +265,7 @@ export default function FacturesPage() {
           productId,
           isNew,
           newName: isNew ? itemName : "",
-          barcode: isNew ? (itemBarcode || undefined) : selectedProduct?.barcode,
+          barcode: isNew ? (normalizeBarcode(itemBarcode) || undefined) : selectedProduct?.barcode,
           newCategory: selectedProduct ? selectedProduct.category : itemCategory,
           quantity: Number(itemQty),
           priceBuy: Number(itemBuy),
@@ -277,7 +279,7 @@ export default function FacturesPage() {
         productId,
         isNew,
         newName: isNew ? itemName : "",
-        barcode: isNew ? (itemBarcode || undefined) : selectedProduct?.barcode,
+        barcode: isNew ? (normalizeBarcode(itemBarcode) || undefined) : selectedProduct?.barcode,
         newCategory: selectedProduct ? selectedProduct.category : itemCategory,
         quantity: Number(itemQty),
         priceBuy: Number(itemBuy),
@@ -318,29 +320,6 @@ export default function FacturesPage() {
     });
   }, [products, search, activeCategory]);
 
-  const updateDraftInvoiceItem = <K extends keyof InvoiceFormItem>(key: K, value: InvoiceFormItem[K]) => {
-    setDraftInvoiceItem(prev => ({ ...prev, [key]: value }));
-  };
-
-  const handleDraftInvoiceMode = (isNew: boolean) => {
-    setDraftInvoiceItem(prev => ({
-      ...prev,
-      isNew,
-      productId: isNew ? "" : prev.productId,
-      newName: isNew ? prev.newName : "",
-    }));
-  };
-
-  const canAddDraftInvoiceItem = draftInvoiceItem.quantity > 0
-    && draftInvoiceItem.priceBuy > 0
-    && draftInvoiceItem.priceSale > 0
-    && (draftInvoiceItem.isNew ? draftInvoiceItem.newName.trim().length > 0 : draftInvoiceItem.productId.length > 0);
-  const addInvoiceItem = () => {
-    if (!canAddDraftInvoiceItem) return;
-    setInvoiceItems(prev => [...prev, { ...draftInvoiceItem, newName: draftInvoiceItem.newName.trim() }]);
-    setDraftInvoiceItem(createInvoiceFormItem());
-  };
-
   const removeInvoiceItem = (idx: number) => {
     setInvoiceItems(prev => prev.filter((_, i) => i !== idx));
   };
@@ -361,7 +340,6 @@ export default function FacturesPage() {
     setNewSupplier({ name: "", phone: "", address: "" });
     setIsNewSupplier(false);
     setInvoiceItems([]);
-    setDraftInvoiceItem(createInvoiceFormItem());
     setInvoiceDate(new Date().toISOString().split("T")[0]);
     setEditingInvoiceId(null);
   }, []);
@@ -369,6 +347,8 @@ export default function FacturesPage() {
   const handleEditInvoice = (invoice: Invoice) => {
     setEditingInvoiceId(invoice.id);
     setSupplierId(invoice.supplier.id);
+    setSupplierName(invoice.supplier.name);
+    setSelectedSupplier(suppliers.find(supplier => supplier.id === invoice.supplier.id) || null);
     setIsNewSupplier(false);
     setInvoiceDate(invoice.date);
     setInvoiceItems(invoice.items.map(item => ({
@@ -388,6 +368,15 @@ export default function FacturesPage() {
     setView("add");
   };
 
+  const handleOpenInvoice = (invoice: Invoice) => {
+    setSelectedInvoice(invoice);
+  };
+
+  /*
+            unit: "unitÃƒÂ©",
+            unit: "unitÃ©",
+      toast.success("Facture en cours enregistrÃ©e");
+  */
   const revertStockForInvoice = async (invoice: Invoice) => {
     const factor = invoice.type === "achat" ? -1 : 1;
     const currentProds = await getProducts();
@@ -422,8 +411,9 @@ export default function FacturesPage() {
   const handleSubmitInvoice = async () => {
     try {
       let supplier: Supplier;
-      if (supplierId) {
-        supplier = suppliers.find(s => s.id === supplierId)!;
+      const supplierFromId = supplierId ? suppliers.find(s => s.id === supplierId) : undefined;
+      if (supplierFromId) {
+        supplier = supplierFromId;
       } else if (supplierName.trim()) {
         const existing = suppliers.find(s => s.name.toLowerCase() === supplierName.trim().toLowerCase());
         if (existing) {
@@ -453,7 +443,8 @@ export default function FacturesPage() {
       let oldInv: Invoice | undefined;
       if (editingInvoiceId) {
         const allInvoices = await getInvoices();
-        oldInv = allInvoices.find(i => i.id === editingInvoiceId);
+        const previousInvoice = allInvoices.find(i => i.id === editingInvoiceId);
+        oldInv = previousInvoice;
       }
 
       // Build Delta Map for product quantities & size stocks (net change)
@@ -482,7 +473,7 @@ export default function FacturesPage() {
         if (newItem.isNew) {
           let existingProd = prodMap.get(newItem.productId);
           if (!existingProd && newItem.barcode) {
-            existingProd = Array.from(prodMap.values()).find(p => p.barcode && p.barcode === newItem.barcode);
+            existingProd = findProductByBarcode(Array.from(prodMap.values()), newItem.barcode);
           }
           if (existingProd) {
             newItem.productId = existingProd.id;
@@ -501,7 +492,7 @@ export default function FacturesPage() {
               sizeStock: undefined,
               unit: "unité",
               expiryDate: newItem.expiryDate || undefined,
-              ...(newItem.barcode ? { barcode: newItem.barcode } : {})
+              ...(normalizeBarcode(newItem.barcode) ? { barcode: normalizeBarcode(newItem.barcode) } : {})
             };
             prodMap.set(newProdId, newProd);
           }
@@ -752,6 +743,11 @@ export default function FacturesPage() {
       toast.error("Aucune étiquette sélectionnée pour l'impression");
       return;
     }
+    window.sessionStorage.setItem(
+      BARCODE_PRINT_VIEW_RESTORE_KEY,
+      String(Date.now() + BARCODE_PRINT_VIEW_RESTORE_WINDOW_MS)
+    );
+    isPrintingRef.current = true;
     printThermalTickets(
       printList.map(item => ({
         name: item.name,
@@ -759,14 +755,27 @@ export default function FacturesPage() {
         barcode: item.barcode,
       }))
     );
+    // Reset after a delay to allow print dialog to fully close
+    setTimeout(() => {
+      isPrintingRef.current = false;
+    }, 1000);
   }, []);
 
-  const handlePrintSingleBarcode = useCallback((item: { name: string; barcode: string; priceSale: number }) => {
-    printBarcodeLabels([{ name: item.name, barcode: item.barcode, priceSale: item.priceSale }]);
+
+  const handlePrintSingleBarcode = useCallback((item: { name: string; barcode: string; priceSale: number; copies: number }) => {
+    const printList: { name: string; barcode: string; priceSale: number }[] = [];
+    for (let i = 0; i < item.copies; i++) {
+      printList.push({ name: item.name, barcode: item.barcode, priceSale: item.priceSale });
+    }
+    printBarcodeLabels(printList);
   }, [printBarcodeLabels]);
 
   // ─── EXECUTE PRINT FROM MODAL (batch) ─────────────────────────────────────
-  const handleExecutePrintBarcodes = () => {
+  const handleExecutePrintBarcodes = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const printList: { name: string; barcode: string; priceSale: number }[] = [];
     modalBarcodeItems.forEach(item => {
       for (let i = 0; i < item.copies; i++) {
@@ -871,24 +880,24 @@ export default function FacturesPage() {
 
   // ─── RENDER BARCODE PREVIEW MODAL ─────────────────────────────────────────
   const renderBarcodeModal = () => {
+    const handleOpenChange = (open: boolean) => {
+      // Prevent modal from closing while print dialog is active
+      if (!open && isPrintingRef.current) {
+        return;
+      }
+      setShowBarcodeModal(open);
+    };
+
     return (
-      <Dialog open={showBarcodeModal} onOpenChange={setShowBarcodeModal}>
+      <Dialog open={showBarcodeModal} onOpenChange={handleOpenChange} modal>
         <DialogContent className="max-w-4xl rounded-[2rem] p-0 overflow-hidden bg-slate-50 border-2 shadow-2xl">
           <DialogHeader className="p-8 pb-4 bg-white border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
-                <Barcode className="h-7 w-7 text-primary" />
-                Modèle & Aperçu des Étiquettes Code-barres
-              </DialogTitle>
-              <p className="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">
-                Aperçu du format automatique sécurisé avant impression
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-xs font-black text-white shadow-md">
-              <Printer className="h-4 w-4" />
-              Xprinter XP-420B · 40 × 20 mm
-            </div>
+              <div>
+                <DialogTitle className="text-2xl font-black text-slate-900 uppercase tracking-tight flex items-center gap-3">
+                  <Barcode className="h-7 w-7 text-primary" />
+                  Aperçu des Étiquettes Code-barres
+                </DialogTitle>
+              </div>
           </DialogHeader>
 
           <div className="border-b border-slate-200 bg-slate-100/80 px-8 py-3 text-center text-xs font-bold text-slate-600">
@@ -924,6 +933,12 @@ export default function FacturesPage() {
                             const val = Math.max(1, Number(e.target.value) || 1);
                             setModalBarcodeItems(prev => prev.map((it, i) => i === idx ? { ...it, copies: val } : it));
                           }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }
+                          }}
                           className="w-14 text-center font-black text-sm bg-white border rounded-lg h-8 outline-none"
                         />
                       </div>
@@ -951,6 +966,9 @@ export default function FacturesPage() {
                           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%", minHeight: "24px", maxHeight: "40px", overflow: "hidden", margin: "1px 0" }}>
                             <BarcodeSvg value={item.barcode} width={1.4} height={35} />
                           </div>
+                          <span style={{ fontFamily: '"Courier New", Courier, monospace', fontSize: "9px", fontWeight: 700, lineHeight: 1, letterSpacing: "0.2px", whiteSpace: "nowrap" }}>
+                            {item.barcode}
+                          </span>
                       </div>
                     </div>
                   </div>
@@ -964,10 +982,11 @@ export default function FacturesPage() {
               Total d'étiquettes à imprimer : <span className="text-slate-900 font-extrabold text-lg ml-1">{modalBarcodeItems.reduce((acc, i) => acc + i.copies, 0)}</span>
             </div>
             <div className="flex items-center gap-3">
-              <Button variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
+              <Button type="button" variant="ghost" onClick={() => setShowBarcodeModal(false)} className="rounded-xl font-bold px-6">
                 Fermer
               </Button>
               <Button
+                type="button"
                 onClick={handleExecutePrintBarcodes}
                 className="h-14 bg-slate-900 hover:bg-primary text-white font-black px-8 rounded-xl flex items-center gap-3 shadow-xl transition-all"
               >
@@ -1626,7 +1645,7 @@ export default function FacturesPage() {
           </thead>
           <tbody>
             {filtered.map(inv => (
-              <tr key={inv.id} className="border-b last:border-0 border-gray-50 hover:bg-[#f0fbf4]/40 transition-colors group cursor-pointer" onClick={() => setSelectedInvoice(inv)}>
+              <tr key={inv.id} className="border-b last:border-0 border-gray-50 hover:bg-[#f0fbf4]/40 transition-colors group cursor-pointer" onClick={() => handleOpenInvoice(inv)}>
                 <td className="px-8 py-6 font-black text-xl text-gray-700">{inv.number}</td>
                 <td className="px-8 py-6 text-left">
                   <div className="flex flex-col">
@@ -1706,7 +1725,7 @@ export default function FacturesPage() {
         {filtered.map(inv => (
           <div
             key={inv.id}
-            onClick={() => setSelectedInvoice(inv)}
+            onClick={() => handleOpenInvoice(inv)}
             className="bg-white p-4 rounded-[2rem] shadow-lg border border-white flex items-center justify-between group active:scale-95 transition-all"
           >
             <div className="flex items-center gap-4">

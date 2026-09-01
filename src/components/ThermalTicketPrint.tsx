@@ -125,6 +125,23 @@ export const THERMAL_PRINT_CSS = `
   transform: none;
 }
 
+.ticket-barcode-value {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: #000;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  text-align: center;
+  white-space: nowrap;
+  transform: none;
+}
+
 @media print {
   #print-root {
     position: absolute;
@@ -199,6 +216,7 @@ export function ThermalTicketPrint({ tickets }: Props) {
                 }),
               }}
             />
+            <span className="ticket-barcode-value">{ticket.barcode}</span>
           </div>
         ))}
       </div>
