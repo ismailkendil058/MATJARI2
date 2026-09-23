@@ -149,7 +149,7 @@ export default function CategoriesPage() {
     };
 
     const handlePasswordSubmit = () => {
-        const SECRET = "ismail2003";
+        const SECRET = "18112003";
         if (password === SECRET) {
             setAuthorized(true);
             setPassword("");

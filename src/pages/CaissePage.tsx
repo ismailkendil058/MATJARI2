@@ -8,12 +8,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   getClients, saveClients, updateClientCredit, addSale, getSales,
   getProducts, updateProductStock, getCustomCards, saveCustomCards,
-  addExpense, updateProduct, getNextTicketId, getCategories
+  addExpense, updateProduct, saveProducts, getNextTicketId, getCategories
 } from "@/lib/db";
 
 import { Product, CartItem, CategoryType, CustomSaleCard, Client, Sale, Expense, Category } from "@/lib/types";
 import { formatDZD, generateId } from "@/lib/store";
-import { findProductByBarcode, normalizeBarcode } from "@/lib/barcode";
+import { findProductByBarcode, normalizeBarcode, generateBarcodeValue } from "@/lib/barcode";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/AuthContext";
 import { CATEGORY_ICON_MAP } from "@/lib/icons";
@@ -80,6 +80,9 @@ export default function CaissePage() {
   const [customModalUnitPrice, setCustomModalUnitPrice] = useState("");
   const [activeCustomCard, setActiveCustomCard] = useState<CustomSaleCard | null>(null);
   const [customCardKg, setCustomCardKg] = useState("");
+
+  const [persoQuantityModalProduct, setPersoQuantityModalProduct] = useState<Product | null>(null);
+  const [persoQuantityInput, setPersoQuantityInput] = useState("");
 
   const [showSizeModal, setShowSizeModal] = useState(false);
   const [sizeModalProduct, setSizeModalProduct] = useState<Product | null>(null);
@@ -241,16 +244,14 @@ export default function CaissePage() {
   };
 
   const addCustomCartItem = (
-    baseProduct: Product,
+    persoProduct: Product,
     kg: number,
     unitPrice: number,
     customPurchaseCostPerKg: number,
     customCardId?: string
   ) => {
     setCart(prev => {
-      const existing = customCardId
-        ? prev.find(c => c.customCardId === customCardId)
-        : prev.find(c => c.customBaseProductId === baseProduct.id && c.customUnitPrice === unitPrice && !c.customCardId);
+      const existing = prev.find(c => c.product.id === persoProduct.id);
 
       if (existing) {
         return prev.map(c =>
@@ -260,23 +261,13 @@ export default function CaissePage() {
         );
       }
 
-      const itemId = customCardId ? `${customCardId}-item` : `${baseProduct.id}-custom-${Date.now()}`;
-      const customProduct: Product = {
-        ...baseProduct,
-        id: itemId,
-        name: baseProduct.name,
-        priceSale: unitPrice,
-        priceBuy: customPurchaseCostPerKg,
-      };
-
       const newItem: CartItem = {
-        product: customProduct,
+        product: persoProduct,
         quantity: kg,
         subtotal: kg * unitPrice,
         weightKg: kg,
         customUnitPrice: unitPrice,
         customUnitCost: customPurchaseCostPerKg,
-        customBaseProductId: baseProduct.id,
         customCardId,
       };
 
@@ -308,20 +299,62 @@ export default function CaissePage() {
     const customPurchaseCostPerKg = getCustomPurchaseCostPerKg(customModalProduct, kg);
 
     try {
-      // 1. Subtract 1 from base product stock immediately
+      // 1. Subtract 1 from base product stock immediately in DB
       await updateProductStock(customModalProduct.id, -1);
 
-      // 2. Update local products state
-      setProducts(prev => prev.map(p =>
-        p.id === customModalProduct.id ? { ...p, stock: p.stock - 1 } : p
-      ));
+      // 2. Derive independent product name e.g. "Marlboro Perso"
+      const baseName = customModalProduct.name.trim();
+      const persoName = baseName.toLowerCase().endsWith("perso") ? baseName : `${baseName} Perso`;
 
-      // 3. Create the custom card (this card is now "separated")
+      // 3. Check if independent product already exists in DB
+      const currentProds = await getProducts();
+      const existingPerso = currentProds.find(
+        p => p.name.toLowerCase() === persoName.toLowerCase() && p.category === customModalProduct.category
+      );
+
+      let targetPersoProduct: Product;
+      if (existingPerso) {
+        targetPersoProduct = {
+          ...existingPerso,
+          stock: existingPerso.stock + kg,
+          priceSale: unitPrice,
+          priceBuy: customPurchaseCostPerKg,
+        };
+        await updateProduct(targetPersoProduct);
+      } else {
+        targetPersoProduct = {
+          id: `perso-${customModalProduct.id}-${Date.now()}`,
+          name: persoName,
+          nameAr: customModalProduct.nameAr ? `${customModalProduct.nameAr} (مخصص)` : undefined,
+          category: customModalProduct.category,
+          priceSale: unitPrice,
+          priceBuy: customPurchaseCostPerKg,
+          stock: kg,
+          unit: customModalProduct.unit || "pièce",
+          barcode: generateBarcodeValue(persoName),
+        };
+        await saveProducts([targetPersoProduct]);
+      }
+
+      // 4. Create the custom card (synced for UI)
       await addCustomCardEntry(customModalProduct, kg, unitPrice, customPurchaseCostPerKg);
 
+      // 5. Refresh products from DB so UI & Inventaire update instantly
+      const refreshedProds = await getProducts();
+      setProducts(refreshedProds);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("novaInventoryUpdated"));
+      }
+
       closeCustomModal();
+      toast({
+        title: "Produit personnalisé créé",
+        description: `Produit "${persoName}" disponible dans l'inventaire (${kg} unités).`
+      });
     } catch (error) {
-      console.error("Error saving custom card:", error);
+      console.error("Error saving custom product:", error);
+      toast({ title: "Erreur", description: "Échec de création du produit personnalisé." });
     }
   };
 
@@ -339,14 +372,22 @@ export default function CaissePage() {
   const handleCustomCardAdd = (card: CustomSaleCard, kgOverride?: number) => {
     const kg = kgOverride ?? 1;
     if (kg <= 0) return;
+
+    const baseName = card.baseProductName.trim();
+    const persoName = baseName.toLowerCase().endsWith("perso") ? baseName : `${baseName} Perso`;
+
     const baseProduct = products.find(p => p.id === card.baseProductId);
-    if (!baseProduct) return;
+    const persoProduct = products.find(
+      p => p.name.toLowerCase() === persoName.toLowerCase() && p.category === card.category
+    ) || baseProduct;
+
+    if (!persoProduct) return;
 
     const pendingInCart = getCustomCardPendingKg(card.id);
     if (kg > card.kg - pendingInCart) return;
 
-    const customPurchaseCostPerKg = card.priceBuyPerKg ?? getCustomPurchaseCostPerKg(baseProduct, card.kg);
-    addCustomCartItem(baseProduct, kg, card.unitPrice, customPurchaseCostPerKg, card.id);
+    const customPurchaseCostPerKg = card.priceBuyPerKg ?? (baseProduct ? getCustomPurchaseCostPerKg(baseProduct, card.kg) : card.unitPrice);
+    addCustomCartItem(persoProduct, kg, card.unitPrice, customPurchaseCostPerKg, card.id);
 
     if (!kgOverride) {
       setActiveCustomCard(null);
@@ -364,8 +405,7 @@ export default function CaissePage() {
   const addToCart = useCallback((product: Product, size?: string) => {
     // Total qty of this product in cart regardless of size (to check stock)
     const totalQtyInCart = cart.reduce((sum, item) => {
-      const baseId = item.customBaseProductId ?? item.product.id;
-      return (baseId === product.id && !item.customCardId) ? sum + item.quantity : sum;
+      return item.product.id === product.id ? sum + item.quantity : sum;
     }, 0);
 
     if (product.stock <= totalQtyInCart) return false;
@@ -406,7 +446,17 @@ export default function CaissePage() {
     return false;
   }, [SIZE_CATEGORIES]);
 
+  const isPersoProduct = useCallback((product: Product) => {
+    return product.name.toLowerCase().includes("perso") || product.id.startsWith("perso-");
+  }, []);
+
   const handleProductClick = (product: Product) => {
+    if (isPersoProduct(product)) {
+      setPersoQuantityModalProduct(product);
+      setPersoQuantityInput("");
+      return;
+    }
+
     if (productHasSizes(product)) {
       sizeModalOpenTimeRef.current = Date.now();
       setSizeModalProduct(product);
@@ -414,6 +464,33 @@ export default function CaissePage() {
     } else {
       addToCart(product);
     }
+  };
+
+  const handlePersoQuantityConfirm = () => {
+    if (!persoQuantityModalProduct) return;
+    const qty = Number(persoQuantityInput);
+    if (!qty || qty <= 0) return;
+
+    const inCart = cart.reduce((sum, item) => item.product.id === persoQuantityModalProduct.id ? sum + item.quantity : sum, 0);
+    if (persoQuantityModalProduct.stock < inCart + qty) {
+      toast({ title: "Stock insuffisant", description: `Seulement ${persoQuantityModalProduct.stock} unités disponibles pour ${persoQuantityModalProduct.name}.` });
+      return;
+    }
+
+    addCustomCartItem(
+      persoQuantityModalProduct,
+      qty,
+      persoQuantityModalProduct.priceSale,
+      persoQuantityModalProduct.priceBuy
+    );
+
+    toast({
+      title: "Ajouté au panier",
+      description: `${qty} x ${persoQuantityModalProduct.name} ajouté(s).`
+    });
+
+    setPersoQuantityModalProduct(null);
+    setPersoQuantityInput("");
   };
 
   const selectSize = (size: string) => {
@@ -471,9 +548,7 @@ export default function CaissePage() {
 
       if (!item) return prev;
 
-
       if (delta > 0) {
-        // Handle custom card specific logic
         if (item.customCardId) {
           const card = customCards.find(c => c.id === item.customCardId);
           if (card) {
@@ -484,18 +559,14 @@ export default function CaissePage() {
             if (pending >= card.kg) return prev;
           }
         } else {
-          // Normal product logic
-          const baseProductId = item.customBaseProductId ?? item.product.id;
-          const baseProduct = products.find(p => p.id === baseProductId);
-          if (!baseProduct) return prev;
+          const targetProd = products.find(p => p.id === item.product.id);
+          if (!targetProd) return prev;
 
-          const totalOwnedInCart = prev.reduce((sum, c) => {
-            if (c.customCardId) return sum; // Skip items that don't deduct from base stock at checkout
-            const cBaseId = c.customBaseProductId ?? c.product.id;
-            return cBaseId === baseProductId ? sum + c.quantity : sum;
+          const totalInCart = prev.reduce((sum, c) => {
+            return c.product.id === item.product.id ? sum + c.quantity : sum;
           }, 0);
 
-          if (totalOwnedInCart >= baseProduct.stock) return prev;
+          if (totalInCart >= targetProd.stock) return prev;
         }
       }
 
@@ -579,9 +650,7 @@ export default function CaissePage() {
     try {
       const saleId = currentSaleId || generateId();
       for (const item of cart) {
-        if (item.customCardId) continue;
-        const productId = item.customBaseProductId ?? item.product.id;
-        const prod = products.find(p => p.id === productId);
+        const prod = products.find(p => p.id === item.product.id);
         if (prod) {
           const nextSizeStock = { ...(prod.sizeStock || {}) };
           if (item.sizeQtys) {
@@ -780,8 +849,7 @@ export default function CaissePage() {
         });
 
         // Restore stock
-        const productId = item.customBaseProductId ?? item.product.id;
-        const prod = products.find(p => p.id === productId);
+        const prod = products.find(p => p.id === item.product.id);
         if (prod) {
           const nextSizeStock = { ...(prod.sizeStock || {}) };
           if (item.size && !item.size.includes(',')) {
@@ -1059,7 +1127,7 @@ export default function CaissePage() {
         <div className="flex-1 overflow-auto rounded-lg mb-4">
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 md:gap-2.5 p-1">
             {filteredProducts.map(product => {
-              const showCustom = customizableCategories.has(product.category);
+              const showCustom = customizableCategories.has(product.category) && !isPersoProduct(product);
               return (
                 <div
                   key={product.id}
@@ -1098,40 +1166,6 @@ export default function CaissePage() {
               );
             })}
           </div>
-          {visibleCustomCards.length > 0 && (
-            <div className="mt-6">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-semibold text-primary">Ventes personnalisées</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                {visibleCustomCards.map(card => (
-                  <div
-                    key={card.id}
-                    className="relative border border-border rounded-2xl bg-white p-3 shadow-sm cursor-pointer group hover:border-primary transition-all overflow-hidden"
-                    onClick={() => handleCustomCardAdd(card, 1)}
-                  >
-                    <div className="flex items-center justify-between relative z-10">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-[#41b86d] bg-[#41b86d]/5 px-2 py-0.5 rounded-full">{card.category}</p>
-                      <span className="text-[10px] font-black text-muted-foreground">{card.kg - getCustomCardPendingKg(card.id)} restants</span>
-                    </div>
-                    <p className="mt-2 text-sm font-bold text-[#3f5362] line-clamp-2">{card.baseProductName}</p>
-                    <div className="flex items-end justify-between mt-1">
-                      <div>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">Prix Unité</p>
-                        <p className="text-lg font-black text-primary leading-tight">{formatDZD(card.unitPrice)}</p>
-                      </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openCustomCardModal(card); }}
-                        className="h-8 w-8 rounded-full bg-secondary hover:bg-primary hover:text-white transition-colors flex items-center justify-center text-muted-foreground"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
 
@@ -1477,6 +1511,43 @@ export default function CaissePage() {
               />
             </div>
             <Button onClick={handleCustomSaleConfirm} className="w-full h-11 mt-2 bg-primary hover:bg-primary/90 text-white font-bold">CRÉER LA CARTE</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Perso Product Quantity Modal */}
+      <Dialog open={!!persoQuantityModalProduct} onOpenChange={open => { if (!open) setPersoQuantityModalProduct(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-bold text-[#243740]">Quantité à vendre</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="rounded-xl bg-[#ecf8f0] p-3 border border-[#b2e2c4]">
+              <p className="text-sm font-black text-[#243740]">{persoQuantityModalProduct?.name}</p>
+              <div className="flex justify-between items-center mt-1">
+                <p className="text-xs text-gray-500 font-bold">Prix unitaire: <span className="text-[#41b86d] font-black">{formatDZD(persoQuantityModalProduct?.priceSale || 0)}</span></p>
+                <p className="text-xs text-gray-500 font-bold">Stock: <span className="font-black text-[#243740]">{persoQuantityModalProduct?.stock}</span></p>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[11px] uppercase tracking-widest text-muted-foreground font-bold">Quantité d'unités à vendre</p>
+              <Input
+                type="number"
+                placeholder="Ex. 5"
+                className="h-12 border-border text-lg font-bold"
+                value={persoQuantityInput}
+                onChange={e => setPersoQuantityInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handlePersoQuantityConfirm(); }}
+                autoFocus
+              />
+            </div>
+            <Button
+              onClick={handlePersoQuantityConfirm}
+              className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-bold text-base rounded-xl"
+              disabled={!persoQuantityInput || Number(persoQuantityInput) <= 0}
+            >
+              AJOUTER AU PANIER
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

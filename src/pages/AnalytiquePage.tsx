@@ -42,6 +42,12 @@ export default function AnalytiquePage() {
       }
     };
     loadData();
+
+    if (typeof window !== "undefined") {
+      const handleInventoryUpdated = () => loadData();
+      window.addEventListener("novaInventoryUpdated", handleInventoryUpdated);
+      return () => window.removeEventListener("novaInventoryUpdated", handleInventoryUpdated);
+    }
   }, [month, day]);
 
   const prefix = day ? `${month}-${day.padStart(2, "0")}` : month;
@@ -198,6 +204,86 @@ export default function AnalytiquePage() {
     });
     return map;
   }, [allSales, profitMapEnd, profitMapStart]);
+
+  const paymentProfitMap = useMemo(() => {
+    const profitMap = new Map<string, number>();
+
+    const clientSalesMap = new Map<string, Sale[]>();
+    allSales.forEach(s => {
+      if (s.clientId && s.type === 'credit') {
+        const list = clientSalesMap.get(s.clientId) || [];
+        list.push(s);
+        clientSalesMap.set(s.clientId, list);
+      }
+    });
+
+    const clientPaymentsMap = new Map<string, Payment[]>();
+    allPayments.forEach(p => {
+      if (p.clientId) {
+        const list = clientPaymentsMap.get(p.clientId) || [];
+        list.push(p);
+        clientPaymentsMap.set(p.clientId, list);
+      }
+    });
+
+    const returnTotalsByOriginalSale = new Map<string, number>();
+    const returnCostsByOriginalSale = new Map<string, number>();
+    allSales.forEach(s => {
+      if (s.type === 'return' && s.originalSaleId) {
+        const cost = Math.abs(s.items.reduce((is, item) => is + getItemPurchaseCost(item), 0));
+        const tot = Math.abs(s.total);
+        returnTotalsByOriginalSale.set(
+          s.originalSaleId,
+          (returnTotalsByOriginalSale.get(s.originalSaleId) || 0) + tot
+        );
+        returnCostsByOriginalSale.set(
+          s.originalSaleId,
+          (returnCostsByOriginalSale.get(s.originalSaleId) || 0) + cost
+        );
+      }
+    });
+
+    const calcClientProfit = (sList: Sale[], cumPayment: number) => {
+      let availablePayment = cumPayment;
+      let totalP = 0;
+      for (const sale of sList) {
+        const rawCost = sale.items.reduce((is, item) => is + getItemPurchaseCost(item), 0);
+        const retTotal = returnTotalsByOriginalSale.get(sale.id) || 0;
+        const retCost = returnCostsByOriginalSale.get(sale.id) || 0;
+
+        const effectiveTotal = Math.max(0, sale.total - retTotal);
+        const effectiveCost = Math.max(0, rawCost - retCost);
+        const initialPaid = sale.paidAmount || 0;
+        const creditOwed = Math.max(0, effectiveTotal - initialPaid);
+
+        const allocated = Math.min(creditOwed, availablePayment);
+        availablePayment -= allocated;
+
+        const totalPaid = initialPaid + allocated;
+        const maxProfit = Math.max(0, effectiveTotal - effectiveCost);
+        const recognizedProfit = Math.max(0, Math.min(maxProfit, totalPaid - effectiveCost));
+        totalP += recognizedProfit;
+      }
+      return totalP;
+    };
+
+    clientPaymentsMap.forEach((pList, clientId) => {
+      const sList = (clientSalesMap.get(clientId) || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+      const sortedPayments = pList.slice().sort((a, b) => a.date.localeCompare(b.date));
+
+      let cumBefore = 0;
+      sortedPayments.forEach(p => {
+        const profitBefore = calcClientProfit(sList, cumBefore);
+        const cumAfter = cumBefore + p.amount;
+        const profitAfter = calcClientProfit(sList, cumAfter);
+        const addedProfit = Math.max(0, profitAfter - profitBefore);
+        profitMap.set(p.id, addedProfit);
+        cumBefore = cumAfter;
+      });
+    });
+
+    return profitMap;
+  }, [allSales, allPayments]);
 
   const totalRevenue = monthlySales.reduce((s, sale) => {
     if (sale.type === 'return') return s - Math.abs(sale.total);
@@ -721,16 +807,26 @@ export default function AnalytiquePage() {
                       >
                         <td className="px-8 py-8">
                           <p className="text-[#3f5362] font-black text-xl">{displayDate}</p>
-                          <p className="text-xs text-gray-400 uppercase font-bold mt-1 tracking-wider">{group.sales.length} ventes effectuées</p>
+                          <p className="text-xs text-gray-400 uppercase font-bold mt-1 tracking-wider">
+                            {group.sales.length} vente{group.sales.length > 1 ? 's' : ''} effectuée{group.sales.length > 1 ? 's' : ''}
+                            {group.payments.length > 0 && ` • ${group.payments.length} versement${group.payments.length > 1 ? 's' : ''}`}
+                          </p>
                         </td>
                         <td className="px-8 py-8 text-center">
-                          <div className="flex justify-center gap-3">
+                          <div className="flex justify-center gap-3 flex-wrap">
                             <span className="px-3 py-1 rounded-full bg-[#41b86d]/10 text-[#41b86d] text-xs font-black tracking-widest">{group.directCount} DIRECT</span>
                             {group.creditCount > 0 && <span className="px-3 py-1 rounded-full bg-red-50 text-red-500 text-xs font-black tracking-widest">{group.creditCount} CRÉDIT</span>}
+                            {group.payments.length > 0 && <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black tracking-widest">{group.payments.length} PAIEMENT</span>}
                           </div>
                         </td>
                         <td className="px-8 py-8 font-bold text-gray-500 max-w-sm">
-                          <p className="truncate">{group.productList.join(", ")}</p>
+                          <p className="truncate">
+                            {group.productList.length > 0
+                              ? group.productList.join(", ")
+                              : group.payments.length > 0
+                              ? `Règlement de crédit (${group.payments.map(p => p.clientName).join(", ")})`
+                              : "—"}
+                          </p>
                         </td>
                         <td className="px-8 py-8 text-right">
                           <span className="font-black text-[#3f5362] text-2xl">{formatDZD(group.revenue)}</span>
@@ -747,44 +843,92 @@ export default function AnalytiquePage() {
                           </div>
                         </td>
                       </tr>
-                      {isOpen && group.sales.map(sale => (
-                        <tr key={sale.id} className="bg-gray-50/30 border-t border-gray-100">
-                          <td className="px-14 py-4 text-sm font-bold text-gray-500">
-                            {new Date(sale.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                            {sale.username && <span className="ml-3 text-[11px] font-black text-amber-600 bg-amber-50 px-3 py-1 rounded-lg">VENTE PAR {sale.username.toUpperCase()}</span>}
-                          </td>
-                          <td className="px-8 py-4 text-center">
-                            <span className={`text-[10px] font-black px-3 py-1 rounded-full tracking-widest ${sale.type === 'credit' ? 'bg-red-50 text-red-500' : sale.type === 'return' ? 'bg-orange-50 text-orange-500' : 'bg-[#41b86d]/10 text-[#41b86d]'}`}>
-                              {sale.type.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="px-8 py-4 text-sm text-gray-600 italic font-medium">
-                            {sale.items.map(i => i.product.name).join(", ")}
-                          </td>
-                          <td className="px-8 py-4 text-right font-black text-gray-600 flex flex-col items-end">
-                            <span className="text-lg">{sale.type === 'return' ? '-' : ''}{formatDZD(sale.total)}</span>
-                            {sale.reduction > 0 && <span className="text-[10px] text-red-500 mt-1">{sale.type === 'return' ? '+' : '-'}{formatDZD(sale.reduction)} RÉDUCTION</span>}
-                          </td>
-                        </tr>
-                      ))}
-                      {isOpen && group.expenses.map(exp => (
-                        <tr key={exp.id} className="bg-orange-50/20 border-t border-gray-100">
-                          <td className="px-14 py-4 text-sm font-bold text-gray-500">
-                            {new Date(exp.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                          </td>
-                          <td className="px-8 py-4 text-center">
-                            <span className="text-[10px] font-black px-3 py-1 rounded-full bg-orange-100 text-orange-600 tracking-widest">
-                              DÉPENSE
-                            </span>
-                          </td>
-                          <td className="px-8 py-4 text-sm text-gray-600 italic font-bold">
-                            {exp.note}
-                          </td>
-                          <td className="px-8 py-4 text-right font-black text-orange-600 text-lg">
-                            - {formatDZD(exp.amount)}
-                          </td>
-                        </tr>
-                      ))}
+                      {isOpen && (() => {
+                        const combinedEntries = [
+                          ...group.sales.map(s => ({ kind: 'sale' as const, date: s.date, sale: s })),
+                          ...group.payments.map(p => ({ kind: 'payment' as const, date: p.date, payment: p })),
+                          ...group.expenses.map(e => ({ kind: 'expense' as const, date: e.date, expense: e }))
+                        ].sort((a, b) => a.date.localeCompare(b.date));
+
+                        return combinedEntries.map(entry => {
+                          if (entry.kind === 'sale') {
+                            const sale = entry.sale;
+                            return (
+                              <tr key={`sale-${sale.id}`} className="bg-gray-50/30 border-t border-gray-100">
+                                <td className="px-14 py-4 text-sm font-bold text-gray-500">
+                                  {new Date(sale.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                  {sale.username && <span className="ml-3 text-[11px] font-black text-amber-600 bg-amber-50 px-3 py-1 rounded-lg">VENTE PAR {sale.username.toUpperCase()}</span>}
+                                </td>
+                                <td className="px-8 py-4 text-center">
+                                  <span className={`text-[10px] font-black px-3 py-1 rounded-full tracking-widest ${sale.type === 'credit' ? 'bg-red-50 text-red-500' : sale.type === 'return' ? 'bg-orange-50 text-orange-500' : 'bg-[#41b86d]/10 text-[#41b86d]'}`}>
+                                    {sale.type.toUpperCase()}
+                                  </span>
+                                </td>
+                                <td className="px-8 py-4 text-sm text-gray-600 italic font-medium">
+                                  {sale.items.map(i => i.product.name).join(", ")}
+                                </td>
+                                <td className="px-8 py-4 text-right font-black text-gray-600 flex flex-col items-end">
+                                  <span className="text-lg">{sale.type === 'return' ? '-' : ''}{formatDZD(sale.total)}</span>
+                                  {sale.reduction > 0 && <span className="text-[10px] text-red-500 mt-1">{sale.type === 'return' ? '+' : '-'}{formatDZD(sale.reduction)} RÉDUCTION</span>}
+                                  <span className={`text-[11px] font-bold mt-1 ${(salePeriodProfits.get(sale.id) || 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    {(salePeriodProfits.get(sale.id) || 0) >= 0 ? '+' : ''}{formatDZD(salePeriodProfits.get(sale.id) || 0)} bénéfice
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          if (entry.kind === 'payment') {
+                            const p = entry.payment;
+                            const addedProfit = paymentProfitMap.get(p.id) || 0;
+                            return (
+                              <tr key={`payment-${p.id}`} className="bg-emerald-50/30 border-t border-emerald-100/60">
+                                <td className="px-14 py-4 text-sm font-bold text-gray-500">
+                                  {new Date(p.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                  {p.addedBy && <span className="ml-3 text-[11px] font-black text-emerald-700 bg-emerald-100 px-3 py-1 rounded-lg">PAIEMENT PAR {p.addedBy.toUpperCase()}</span>}
+                                </td>
+                                <td className="px-8 py-4 text-center">
+                                  <span className="text-[10px] font-black px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 tracking-widest">
+                                    PAIEMENT CRÉDIT
+                                  </span>
+                                </td>
+                                <td className="px-8 py-4 text-sm text-gray-700 font-medium">
+                                  Client: <span className="font-black text-[#3f5362]">{p.clientName}</span>
+                                  {p.note && <span className="text-gray-500 italic ml-2">({p.note})</span>}
+                                </td>
+                                <td className="px-8 py-4 text-right font-black flex flex-col items-end">
+                                  <span className="text-lg text-emerald-600">+ {formatDZD(p.amount)}</span>
+                                  <span className="text-[11px] font-bold text-emerald-600 mt-1">
+                                    + {formatDZD(addedProfit)} bénéfice
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          if (entry.kind === 'expense') {
+                            const exp = entry.expense;
+                            return (
+                              <tr key={`expense-${exp.id}`} className="bg-orange-50/20 border-t border-gray-100">
+                                <td className="px-14 py-4 text-sm font-bold text-gray-500">
+                                  {new Date(exp.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                                <td className="px-8 py-4 text-center">
+                                  <span className="text-[10px] font-black px-3 py-1 rounded-full bg-orange-100 text-orange-600 tracking-widest">
+                                    DÉPENSE
+                                  </span>
+                                </td>
+                                <td className="px-8 py-4 text-sm text-gray-600 italic font-bold">
+                                  {exp.note}
+                                </td>
+                                <td className="px-8 py-4 text-right font-black text-orange-600 text-lg">
+                                  - {formatDZD(exp.amount)}
+                                </td>
+                              </tr>
+                            );
+                          }
+                        });
+                      })()}
                     </Fragment>
                   );
                 })

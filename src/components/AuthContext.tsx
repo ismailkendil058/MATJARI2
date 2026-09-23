@@ -40,7 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         // Fallback: hardcoded admin account
-        if (password === "ismail2003" && (!username || username === "admin")) {
+        if (password === "18112003" && (!username || username === "admin")) {
             const adminUser: User = {
                 id: "admin",
                 username: "admin",

@@ -53,6 +53,12 @@ export default function InventairePage() {
       }
     };
     loadData();
+
+    if (typeof window !== "undefined") {
+      const handleUpdated = () => { loadData(); };
+      window.addEventListener("novaInventoryUpdated", handleUpdated);
+      return () => window.removeEventListener("novaInventoryUpdated", handleUpdated);
+    }
   }, []);
 
   const dispatchInventoryUpdate = () => {
